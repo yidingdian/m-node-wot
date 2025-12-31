@@ -20,17 +20,17 @@ const { debug, warn } = createLoggers("binding-mqtt", "mqtt-message-pool");
 
 export default class MQTTMessagePool {
     client?: mqtt.MqttClient;
-    subscribers: Map<string, (topic: string, message: Buffer) => void> = new Map();
+    subscribers: Map<string, (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => void> = new Map();
     errors: Map<string, (error: Error) => void> = new Map();
 
     public async connect(brokerURI: string, config: MqttClientConfig): Promise<void> {
         if (this.client === undefined) {
             this.client = await mqtt.connectAsync(brokerURI, config);
-            this.client.on("message", (receivedTopic: string, payload: Buffer) => {
+            this.client.on("message", (receivedTopic: string, payload: Buffer, packet: mqtt.IPublishPacket) => {
                 debug(
                     `Received MQTT message from ${brokerURI} (topic: ${receivedTopic}, data length: ${payload.length})`
                 );
-                this.subscribers.get(receivedTopic)?.(receivedTopic, payload);
+                this.subscribers.get(receivedTopic)?.(receivedTopic, payload, packet);
             });
             // Connection errors should be deal by the connectAsync
             // here we handle "runtime" parsing errors, but we can't do much
@@ -46,7 +46,7 @@ export default class MQTTMessagePool {
 
     public async subscribe(
         filter: string | string[],
-        callback: (topic: string, message: Buffer) => void,
+        callback: (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => void,
         error: (error: Error) => void
     ): Promise<void> {
         if (this.client == null) {

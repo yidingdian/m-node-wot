@@ -64,8 +64,14 @@ export default class MqttClient implements ProtocolClient {
         const requestUri = new url.URL(form.href);
         const brokerUri: string = `${this.scheme}://` + requestUri.host;
         // Keeping the path as the topic for compatibility reasons.
-        // Current specification allows only form["mqv:filter"]
-        const filter = requestUri.pathname.slice(1) ?? form["mqv:filter"];
+        // Current specification allows only form["mqv:filter"]. If href has no path (empty string),
+        // `requestUri.pathname.slice(1)` returns '' which is not nullish — use explicit empty-check.
+        const _path = requestUri.pathname.slice(1) || '';
+        const filter = _path.length ? _path : form["mqv:filter"];
+
+        if (!filter) {
+            throw new Error("No topic or filter provided");
+        }
 
         let pool = this.pools.get(brokerUri);
 
@@ -78,8 +84,8 @@ export default class MqttClient implements ProtocolClient {
 
         await pool.subscribe(
             filter,
-            (topic: string, message: Buffer) => {
-                next(new Content(contentType, Readable.from(message)));
+            (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
+                next(new Content(contentType, Readable.from(message), packet));
             },
             (e: Error) => {
                 if (error) error(e);
@@ -94,8 +100,14 @@ export default class MqttClient implements ProtocolClient {
         const requestUri = new url.URL(form.href);
         const brokerUri: string = `${this.scheme}://` + requestUri.host;
         // Keeping the path as the topic for compatibility reasons.
-        // Current specification allows only form["mqv:filter"]
-        const filter = requestUri.pathname.slice(1) ?? form["mqv:filter"];
+        // Current specification allows only form["mqv:filter"]. If href has no path (empty string),
+        // `requestUri.pathname.slice(1)` returns '' which is not nullish — use explicit empty-check.
+        const _path = requestUri.pathname.slice(1) || '';
+        const filter = _path.length ? _path : form["mqv:filter"];
+
+        if (!filter) {
+            throw new Error("No topic or filter provided");
+        }
 
         let pool = this.pools.get(brokerUri);
 
@@ -109,8 +121,8 @@ export default class MqttClient implements ProtocolClient {
         const result = await new Promise<Content>((resolve, reject) => {
             pool!.subscribe(
                 filter,
-                (topic: string, message: Buffer) => {
-                    resolve(new Content(contentType, Readable.from(message)));
+                (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
+                    resolve(new Content(contentType, Readable.from(message), packet));
                 },
                 (e: Error) => {
                     reject(e);
@@ -125,7 +137,14 @@ export default class MqttClient implements ProtocolClient {
     public async writeResource(form: MqttForm, content: Content): Promise<void> {
         const requestUri = new url.URL(form.href);
         const brokerUri = `${this.scheme}://${requestUri.host}`;
-        const topic = requestUri.pathname.slice(1) ?? form["mqv:topic"];
+        // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
+        // Fall back to form["mqv:topic"] in that case.
+        const _path = requestUri.pathname.slice(1) || '';
+        const topic = _path.length ? _path : form["mqv:topic"];
+
+        if (!topic) {
+            throw new Error("No topic provided");
+        }
 
         let pool = this.pools.get(brokerUri);
 
@@ -138,16 +157,27 @@ export default class MqttClient implements ProtocolClient {
 
         // if not input was provided, set up an own body otherwise take input as body
         const buffer = content === undefined ? Buffer.from("") : await content.toBuffer();
-        await pool.publish(topic, buffer, {
+        const options: mqtt.IClientPublishOptions = {
             retain: form["mqv:retain"],
             qos: mapQoS(form["mqv:qos"]),
-        });
+        };
+        if (content && content.meta && content.meta.properties) {
+            options.properties = content.meta.properties;
+        }
+        await pool.publish(topic, buffer, options);
     }
 
     public async invokeResource(form: MqttForm, content: Content): Promise<Content> {
         const requestUri = new url.URL(form.href);
-        const topic = requestUri.pathname.slice(1);
         const brokerUri = `${this.scheme}://${requestUri.host}`;
+        // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
+        // Fall back to form["mqv:topic"] in that case.
+        const _path = requestUri.pathname.slice(1) || '';
+        const topic = _path.length ? _path : form["mqv:topic"];
+
+        if (!topic) {
+            throw new Error("No topic provided");
+        }
 
         let pool = this.pools.get(brokerUri);
 
@@ -160,10 +190,14 @@ export default class MqttClient implements ProtocolClient {
 
         // if not input was provided, set up an own body otherwise take input as body
         const buffer = content === undefined ? Buffer.from("") : await content.toBuffer();
-        await pool.publish(topic, buffer, {
+        const options: mqtt.IClientPublishOptions = {
             retain: form["mqv:retain"],
             qos: mapQoS(form["mqv:qos"]),
-        });
+        };
+        if (content && content.meta && content.meta.properties) {
+            options.properties = content.meta.properties;
+        }
+        await pool.publish(topic, buffer, options);
         // there will be no response
         return new DefaultContent(Readable.from([]));
     }
@@ -171,7 +205,14 @@ export default class MqttClient implements ProtocolClient {
     public async unlinkResource(form: Form): Promise<void> {
         const requestUri = new url.URL(form.href);
         const brokerUri: string = `${this.scheme}://` + requestUri.host;
-        const topic = requestUri.pathname.slice(1);
+        // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
+        // Fall back to form["mqv:filter"] in that case.
+        const _path = requestUri.pathname.slice(1) || '';
+        const topic = _path.length ? _path : (form as MqttForm)["mqv:filter"];
+
+        if (!topic) {
+            throw new Error("No topic or filter provided");
+        }
 
         const pool = this.pools.get(brokerUri);
         if (pool != null) {

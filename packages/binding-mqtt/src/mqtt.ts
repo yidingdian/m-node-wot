@@ -48,6 +48,7 @@ export interface MqttClientConfig {
     username?: string;
     password?: string;
     rejectUnauthorized?: boolean;
+    protocolVersion?: 3 | 4 | 5;
 }
 
 export interface MqttBrokerServerConfig {
