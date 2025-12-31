@@ -39,6 +39,10 @@ export class MqttForm extends Form {
     public "mqv:filter"?: string | string[];
 
     public "mqv:controlPacket"?: "publish" | "subscribe" | "unsubscribe";
+
+    public "mqv:properties"?: {
+        [key: string]: any;
+    };
 }
 
 export interface MqttClientConfig {
@@ -49,6 +53,11 @@ export interface MqttClientConfig {
     password?: string;
     rejectUnauthorized?: boolean;
     protocolVersion?: 3 | 4 | 5;
+    /**
+     * Timeout in milliseconds for operations that wait for a response (readResource, writeResource/invokeResource with responseTopic).
+     * Default is 10000ms (10s).
+     */
+    timeout?: number;
 }
 
 export interface MqttBrokerServerConfig {

@@ -50,7 +50,7 @@ export interface ProtocolClient {
     readResource(form: Form): Promise<Content>;
 
     /** this client is requested to perform a "write" on the resource with the given URI  */
-    writeResource(form: Form, content: Content): Promise<void>;
+    writeResource(form: Form, content: Content): Promise<void | Content>;
 
     /** this client is requested to perform an "invoke" on the resource with the given URI */
     invokeResource(form: Form, content?: Content): Promise<Content>;

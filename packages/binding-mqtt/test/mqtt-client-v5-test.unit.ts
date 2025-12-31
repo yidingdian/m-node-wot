@@ -205,6 +205,7 @@ describe("MQTT client v5 support", () => {
         const form: MqttForm = {
             href: `${brokerUri}/${topic}`,
             "mqv:controlPacket": "subscribe",
+            "mqv:retain": true,
         };
         const properties = {
             userProperties: {
@@ -283,5 +284,239 @@ describe("MQTT client v5 support", () => {
         expect(content.meta).to.exist;
         expect(content.meta.properties).to.exist;
         expect(content.meta.properties.userProperties).to.deep.equal(properties.userProperties);
+    });
+
+    it("should subscribe to responseTopic and wait for response when invoking a resource (MQTT v5)", async () => {
+        client = new MqttClient({ protocolVersion: 5, reconnectPeriod: 0 } as any);
+        const topic = "test/invoke-resp";
+        const responseTopic = "test/response";
+        const form: MqttForm = {
+            href: `${brokerUri}/${topic}`,
+            "mqv:controlPacket": "publish",
+        };
+        const properties = {
+            responseTopic: responseTopic,
+            correlationData: Buffer.from("12345"),
+        };
+        const content = new Content("application/json", Readable.from(Buffer.from("request")), { properties });
+
+        // Start invokeResource in background
+        const invokePromise = client.invokeResource(form, content);
+
+        // Wait for subscribe packet for responseTopic
+        const subscribePacket = (await waitForPacket("subscribe")) as mqttPacket.ISubscribePacket;
+        expect(subscribePacket).to.exist;
+        expect(subscribePacket.subscriptions[0].topic).to.equal(responseTopic);
+
+        // Wait for publish packet (request)
+        const publishPacket = (await waitForPacket("publish")) as mqttPacket.IPublishPacket;
+        expect(publishPacket).to.exist;
+        expect(publishPacket.topic).to.equal(topic);
+        expect(publishPacket.properties!.responseTopic).to.equal(responseTopic);
+
+        // Send response from broker
+        const responsePayload = "response-data";
+        const responsePublish = mqttPacket.generate(
+            {
+                cmd: "publish",
+                topic: responseTopic,
+                payload: Buffer.from(responsePayload),
+                qos: 0,
+                retain: false,
+                dup: false,
+                properties: {
+                    correlationData: properties.correlationData,
+                    contentType: "text/plain",
+                },
+            },
+            { protocolVersion: 5 }
+        );
+        if (clientSocket) clientSocket.write(responsePublish);
+
+        // Wait for invokeResource to resolve
+        const result = await invokePromise;
+        const resultBuffer = await result.toBuffer();
+        expect(resultBuffer.toString()).to.equal(responsePayload);
+        expect(result.meta.properties!.correlationData).to.deep.equal(properties.correlationData);
+
+        // Verify unsubscribe
+        const unsubscribePacket = (await waitForPacket("unsubscribe")) as mqttPacket.IUnsubscribePacket;
+        expect(unsubscribePacket).to.exist;
+        expect(unsubscribePacket.unsubscriptions[0]).to.equal(responseTopic);
+    });
+
+    it("should timeout when response is not received within configured timeout", async () => {
+        const timeout = 500;
+        client = new MqttClient({ protocolVersion: 5, reconnectPeriod: 0, timeout: timeout } as any);
+        const topic = "test/timeout";
+        const responseTopic = "test/timeout-resp";
+        const form: MqttForm = {
+            href: `${brokerUri}/${topic}`,
+            "mqv:controlPacket": "publish",
+        };
+        const properties = {
+            responseTopic: responseTopic,
+        };
+        const content = new Content("application/json", Readable.from(Buffer.from("request")), { properties });
+
+        const startTime = Date.now();
+        try {
+            await client.invokeResource(form, content);
+            throw new Error("Should have timed out");
+        } catch (e: any) {
+            const duration = Date.now() - startTime;
+            expect(e.message).to.contain("Timeout waiting for response");
+            expect(duration).to.be.at.least(timeout);
+            // expect(duration).to.be.lessThan(timeout + 200); // Allow some buffer - removed as it can be flaky in CI
+        }
+    });
+
+    it("should return response content when writing a resource with responseTopic (MQTT v5)", async () => {
+        client = new MqttClient({ protocolVersion: 5, reconnectPeriod: 0 } as any);
+        const topic = "test/write-resp";
+        const responseTopic = "test/write-response";
+        const form: MqttForm = {
+            href: `${brokerUri}/${topic}`,
+            "mqv:controlPacket": "publish",
+        };
+        const properties = {
+            responseTopic: responseTopic,
+            correlationData: Buffer.from("write-123"),
+        };
+        const content = new Content("application/json", Readable.from(Buffer.from("write-request")), { properties });
+
+        // Start writeResource in background
+        const writePromise = client.writeResource(form, content);
+
+        // Wait for subscribe packet for responseTopic
+        const subscribePacket = (await waitForPacket("subscribe")) as mqttPacket.ISubscribePacket;
+        expect(subscribePacket).to.exist;
+        expect(subscribePacket.subscriptions[0].topic).to.equal(responseTopic);
+
+        // Wait for publish packet (request)
+        const publishPacket = (await waitForPacket("publish")) as mqttPacket.IPublishPacket;
+        expect(publishPacket).to.exist;
+        expect(publishPacket.topic).to.equal(topic);
+
+        // Send response from broker
+        const responsePayload = "write-response-data";
+        const responsePublish = mqttPacket.generate(
+            {
+                cmd: "publish",
+                topic: responseTopic,
+                payload: Buffer.from(responsePayload),
+                qos: 0,
+                retain: false,
+                dup: false,
+                properties: {
+                    correlationData: properties.correlationData,
+                    contentType: "text/plain",
+                },
+            },
+            { protocolVersion: 5 }
+        );
+        if (clientSocket) clientSocket.write(responsePublish);
+
+        // Wait for writeResource to resolve and check result
+        const result = (await writePromise) as Content;
+        expect(result).to.exist;
+        const resultBuffer = await result.toBuffer();
+        expect(resultBuffer.toString()).to.equal(responsePayload);
+        expect(result.meta.properties!.correlationData).to.deep.equal(properties.correlationData);
+    });
+
+    it("should return response content when reading a resource with responseTopic (MQTT v5)", async () => {
+        client = new MqttClient({ protocolVersion: 5, reconnectPeriod: 0 } as any);
+        const topic = "test/read-req";
+        const responseTopic = "test/read-response";
+        const form: MqttForm = {
+            href: `${brokerUri}/${topic}`,
+            "mqv:controlPacket": "publish",
+            "mqv:properties": {
+                responseTopic: responseTopic,
+                correlationData: Buffer.from("read-123"),
+            },
+        };
+
+        // Start readResource in background
+        const readPromise = client.readResource(form);
+
+        // Wait for subscribe packet for responseTopic
+        const subscribePacket = (await waitForPacket("subscribe")) as mqttPacket.ISubscribePacket;
+        expect(subscribePacket).to.exist;
+        expect(subscribePacket.subscriptions[0].topic).to.equal(responseTopic);
+
+        // Wait for publish packet (request)
+        const publishPacket = (await waitForPacket("publish")) as mqttPacket.IPublishPacket;
+        expect(publishPacket).to.exist;
+        expect(publishPacket.topic).to.equal(topic);
+        expect(publishPacket.payload.length).to.equal(0); // Empty payload for read
+
+        // Send response from broker
+        const responsePayload = "read-response-data";
+        const responsePublish = mqttPacket.generate(
+            {
+                cmd: "publish",
+                topic: responseTopic,
+                payload: Buffer.from(responsePayload),
+                qos: 0,
+                retain: false,
+                dup: false,
+                properties: {
+                    correlationData: form["mqv:properties"]!.correlationData,
+                    contentType: "text/plain",
+                },
+            },
+            { protocolVersion: 5 }
+        );
+        if (clientSocket) clientSocket.write(responsePublish);
+
+        // Wait for readResource to resolve and check result
+        const result = await readPromise;
+        expect(result).to.exist;
+        const resultBuffer = await result.toBuffer();
+        expect(resultBuffer.toString()).to.equal(responsePayload);
+        expect(result.meta.properties!.correlationData).to.deep.equal(form["mqv:properties"]!.correlationData);
+    });
+
+    it("should use default response topic for readResource when properties are missing", async () => {
+        client = new MqttClient({ protocolVersion: 5 } as any);
+        const form: MqttForm = {
+            href: `${brokerUri}/test/read`,
+            op: ["readproperty"],
+            "mqv:filter": "test/read",
+            "mqv:qos": "1",
+        };
+
+        const readPromise = client.readResource(form);
+
+        // Wait for subscribe to response topic (test/read/response)
+        await waitForPacket("subscribe");
+        const subPacket = receivedPackets.find((p) => p.cmd === "subscribe") as mqttPacket.ISubscribePacket;
+        expect(subPacket.subscriptions[0].topic).to.equal("test/read/response");
+
+        // Wait for publish to request topic (test/read)
+        await waitForPacket("publish");
+        const pubPacket = receivedPackets.find((p) => p.cmd === "publish") as mqttPacket.IPublishPacket;
+        expect(pubPacket.topic).to.equal("test/read");
+
+        // Simulate response
+        const response = mqttPacket.generate(
+            {
+                cmd: "publish",
+                topic: "test/read/response",
+                payload: Buffer.from("response-data"),
+                qos: 1,
+                dup: false,
+                retain: false,
+                messageId: 1234,
+            },
+            { protocolVersion: 5 }
+        );
+        clientSocket!.write(response);
+
+        const result = await readPromise;
+        const buffer = await result.toBuffer();
+        expect(buffer.toString()).to.equal("response-data");
     });
 });

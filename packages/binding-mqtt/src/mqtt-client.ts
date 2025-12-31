@@ -36,6 +36,8 @@ import { mapQoS } from "./util";
 
 const { debug, warn } = createLoggers("binding-mqtt", "mqtt-client");
 
+const DEFAULT_TIMEOUT = 5000;
+
 declare interface MqttClientSecurityParameters {
     username: string;
     password: string;
@@ -53,6 +55,54 @@ export default class MqttClient implements ProtocolClient {
     }
 
     private client?: mqtt.MqttClient;
+
+    private async publishAndWait(
+        pool: MQTTMessagePool,
+        topic: string,
+        buffer: Buffer,
+        options: mqtt.IClientPublishOptions,
+        responseTopic: string,
+        contentType: string
+    ): Promise<Content> {
+        let resolve: (value: Content | PromiseLike<Content>) => void;
+        let reject: (reason?: any) => void;
+        const responsePromise = new Promise<Content>((res, rej) => {
+            resolve = res;
+            reject = rej;
+        });
+
+        let timer: NodeJS.Timeout;
+
+        const messageHandler = (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
+            if (timer) clearTimeout(timer);
+            resolve(new Content(contentType, Readable.from(message), packet));
+        };
+
+        await pool.subscribe(
+            responseTopic,
+            messageHandler,
+            (e: Error) => {
+                if (timer) clearTimeout(timer);
+                reject(e);
+            }
+        );
+
+        timer = setTimeout(() => {
+            pool.unsubscribe(responseTopic).catch(() => {});
+            reject(new Error(`Timeout waiting for response on topic ${responseTopic}`));
+        }, this.config.timeout ?? DEFAULT_TIMEOUT);
+
+        try {
+            await pool.publish(topic, buffer, options);
+            const result = await responsePromise;
+            await pool.unsubscribe(responseTopic);
+            return result;
+        } catch (err) {
+            if (timer) clearTimeout(timer);
+            await pool.unsubscribe(responseTopic).catch(() => {});
+            throw err;
+        }
+    }
 
     public async subscribeResource(
         form: MqttForm,
@@ -103,11 +153,6 @@ export default class MqttClient implements ProtocolClient {
         // Current specification allows only form["mqv:filter"]. If href has no path (empty string),
         // `requestUri.pathname.slice(1)` returns '' which is not nullish — use explicit empty-check.
         const _path = requestUri.pathname.slice(1) || '';
-        const filter = _path.length ? _path : form["mqv:filter"];
-
-        if (!filter) {
-            throw new Error("No topic or filter provided");
-        }
 
         let pool = this.pools.get(brokerUri);
 
@@ -118,13 +163,59 @@ export default class MqttClient implements ProtocolClient {
 
         await pool.connect(brokerUri, this.config);
 
+        const filter = _path.length ? _path : form["mqv:filter"];
+
+        const explicitResponseTopic = form["mqv:properties"] && form["mqv:properties"].responseTopic;
+        // Default to adding '/response' if properties are missing and it's not a retained read
+        const useDefaultResponseTopic = !form["mqv:properties"] && !form["mqv:retain"];
+
+        if (explicitResponseTopic || useDefaultResponseTopic) {
+            const filterString = typeof filter === "string" ? filter : undefined;
+            const responseTopic = explicitResponseTopic || (filterString ? `${filterString}/response` : undefined);
+
+            if (!responseTopic) {
+                throw new Error("No response topic could be determined");
+            }
+
+            const topic = _path.length ? _path : (form["mqv:topic"] || filterString);
+            if (!topic) {
+                throw new Error("No topic provided for read request");
+            }
+
+            const options: mqtt.IClientPublishOptions = {
+                qos: mapQoS(form["mqv:qos"]),
+                retain: form["mqv:retain"],
+                properties: form["mqv:properties"],
+            };
+
+            return this.publishAndWait(
+                pool,
+                topic,
+                Buffer.from(""),
+                options,
+                responseTopic,
+                contentType
+            );
+        }
+
+        if (!filter) {
+            throw new Error("No topic or filter provided");
+        }
+
+        let timer: NodeJS.Timeout;
         const result = await new Promise<Content>((resolve, reject) => {
+            timer = setTimeout(() => {
+                reject(new Error(`Timeout waiting for message on topic ${filter}`));
+            }, this.config.timeout ?? DEFAULT_TIMEOUT);
+
             pool!.subscribe(
                 filter,
                 (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
+                    clearTimeout(timer);
                     resolve(new Content(contentType, Readable.from(message), packet));
                 },
                 (e: Error) => {
+                    clearTimeout(timer);
                     reject(e);
                 }
             );
@@ -134,7 +225,7 @@ export default class MqttClient implements ProtocolClient {
         return result;
     }
 
-    public async writeResource(form: MqttForm, content: Content): Promise<void> {
+    public async writeResource(form: MqttForm, content: Content): Promise<void | Content> {
         const requestUri = new url.URL(form.href);
         const brokerUri = `${this.scheme}://${requestUri.host}`;
         // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
@@ -164,6 +255,18 @@ export default class MqttClient implements ProtocolClient {
         if (content && content.meta && content.meta.properties) {
             options.properties = content.meta.properties;
         }
+
+        if (options.properties && options.properties.responseTopic) {
+            return this.publishAndWait(
+                pool,
+                topic,
+                buffer,
+                options,
+                options.properties.responseTopic,
+                form.contentType ?? ContentSerdes.DEFAULT
+            );
+        }
+
         await pool.publish(topic, buffer, options);
     }
 
@@ -197,6 +300,18 @@ export default class MqttClient implements ProtocolClient {
         if (content && content.meta && content.meta.properties) {
             options.properties = content.meta.properties;
         }
+
+        if (options.properties && options.properties.responseTopic) {
+            return this.publishAndWait(
+                pool,
+                topic,
+                buffer,
+                options,
+                options.properties.responseTopic,
+                form.contentType ?? ContentSerdes.DEFAULT
+            );
+        }
+
         await pool.publish(topic, buffer, options);
         // there will be no response
         return new DefaultContent(Readable.from([]));
