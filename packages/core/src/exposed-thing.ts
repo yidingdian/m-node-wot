@@ -161,18 +161,21 @@ export default class ExposedThing extends TD.Thing implements WoT.ExposedThing {
         }
     }
 
-    public async emitPropertyChange(name: string): Promise<void> {
+    public async emitPropertyChange(name: string, data?: WoT.InteractionInput): Promise<void> {
         if (this.properties[name] != null) {
             const property = this.properties[name];
-            const readHandler = this.#propertyHandlers.get(name)?.readHandler;
 
-            if (!readHandler) {
-                throw new Error(
-                    "Can't read property readHandler is not defined. Did you forget to register a readHandler?"
-                );
+            if (data === undefined) {
+                const readHandler = this.#propertyHandlers.get(name)?.readHandler;
+
+                if (!readHandler) {
+                    throw new Error(
+                        "Can't read property readHandler is not defined. Did you forget to register a readHandler?"
+                    );
+                }
+
+                data = await readHandler();
             }
-
-            const data = await readHandler();
             this.#propertyListeners.notify(property, data, property);
         } else {
             // NotFoundError

@@ -897,6 +897,44 @@ class WoTServerTest {
         protocolListener.should.have.been.called();
     }
 
+    @test async "should be able to emit property change with data"() {
+        const thing = await WoTServerTest.WoT.produce({
+            title: "The Machine",
+            properties: {
+                test: {
+                    observable: true,
+                    forms: [
+                        {
+                            href: "http://example.org/test",
+                            op: ["readproperty", "observeproperty"],
+                        },
+                    ],
+                },
+            },
+        });
+
+        const callback = spy(async (options?: InteractionOptions): Promise<InteractionInput> => {
+            return "oldValue";
+        });
+
+        const protocolListener = spy(async (content: Content) => {
+            expect(content.type).not.to.be.undefined;
+            expect(content.body).not.to.be.undefined;
+
+            const body = await content.toBuffer();
+            expect(body.toString()).to.equal('"newValue"');
+        });
+
+        thing.setPropertyReadHandler("test", callback);
+
+        (thing as ExposedThing).handleObserveProperty("test", protocolListener, { formIndex: 0 });
+
+        await (<ExposedThing>thing).emitPropertyChange("test", "newValue");
+
+        callback.should.not.have.been.called();
+        protocolListener.should.have.been.called();
+    }
+
     @test async "should be able to subscribe to an event"() {
         const thing = await WoTServerTest.WoT.produce({
             title: "The Machine",
