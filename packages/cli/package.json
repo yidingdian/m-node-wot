@@ -1,10 +1,10 @@
 {
-    "name": "@node-wot/cli",
+    "name": "@yidingdian/cli",
     "version": "0.9.2",
     "description": "servient command line interface",
-    "author": "Eclipse Thingweb <thingweb-dev@eclipse.org> (https://thingweb.io/)",
+    "author": "yidingdian <iadom@163.com>",
     "license": "EPL-2.0 OR W3C-20150513",
-    "repository": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/cli",
+    "repository": "https://github.com/yidingdian/m-node-wot/tree/master/packages/cli",
     "publishConfig": {
         "access": "public"
     },
@@ -20,11 +20,11 @@
         "ts-node": "10.9.1"
     },
     "dependencies": {
-        "@node-wot/binding-coap": "0.9.2",
-        "@node-wot/binding-file": "0.9.2",
-        "@node-wot/binding-http": "0.9.2",
-        "@node-wot/binding-mqtt": "0.9.2",
-        "@node-wot/core": "0.9.2",
+        "@yidingdian/binding-coap": "0.9.2",
+        "@yidingdian/binding-file": "0.9.2",
+        "@yidingdian/binding-http": "0.9.2",
+        "@yidingdian/binding-mqtt": "0.9.2",
+        "@yidingdian/core": "0.9.2",
         "@thingweb/thing-model": "^1.0.4",
         "ajv": "^8.11.0",
         "commander": "^9.1.0",
@@ -42,9 +42,9 @@
         "test": "mocha --require ts-node/register --extension ts"
     },
     "bugs": {
-        "url": "https://github.com/eclipse-thingweb/node-wot/issues"
+        "url": "https://github.com/yidingdian/m-node-wot/issues"
     },
-    "homepage": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/cli#readme",
+    "homepage": "https://github.com/yidingdian/m-node-wot/tree/master/packages/cli#readme",
     "keywords": [],
     "devDependencies": {
         "@types/lodash": "^4.14.199"

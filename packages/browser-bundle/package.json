@@ -1,10 +1,10 @@
 {
-    "name": "@node-wot/browser-bundle",
+    "name": "@yidingdian/browser-bundle",
     "version": "0.9.2",
     "description": "A node-wot bundle that can run in a web browser",
-    "author": "Eclipse Thingweb <thingweb-dev@eclipse.org> (https://thingweb.io/)",
+    "author": "yidingdian <iadom@163.com>",
     "license": "EPL-2.0 OR W3C-20150513",
-    "repository": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/browser-bundle",
+    "repository": "https://github.com/yidingdian/m-node-wot/tree/master/packages/browser-bundle",
     "publishConfig": {
         "access": "public"
     },
@@ -32,13 +32,13 @@
         "format": "prettier --write *.js test/*.js *.ts \"**/*.json\""
     },
     "bugs": {
-        "url": "https://github.com/eclipse-thingweb/node-wot/issues"
+        "url": "https://github.com/yidingdian/m-node-wot/issues"
     },
-    "homepage": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/browser-bundle#readme",
+    "homepage": "https://github.com/yidingdian/m-node-wot/tree/master/packages/browser-bundle#readme",
     "keywords": [],
     "dependencies": {
-        "@node-wot/binding-http": "0.9.2",
-        "@node-wot/binding-websockets": "0.9.2",
-        "@node-wot/core": "0.9.2"
+        "@yidingdian/binding-http": "0.9.2",
+        "@yidingdian/binding-websockets": "0.9.2",
+        "@yidingdian/core": "0.9.2"
     }
 }

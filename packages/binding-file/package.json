@@ -1,10 +1,10 @@
 {
-    "name": "@node-wot/binding-file",
+    "name": "@yidingdian/binding-file",
     "version": "0.9.2",
     "description": "File client protocol binding for node-wot",
-    "author": "Eclipse Thingweb <thingweb-dev@eclipse.org> (https://thingweb.io/)",
+    "author": "yidingdian <iadom@163.com>",
     "license": "EPL-2.0 OR W3C-20150513",
-    "repository": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/binding-file",
+    "repository": "https://github.com/yidingdian/m-node-wot/tree/master/packages/binding-file",
     "publishConfig": {
         "access": "public"
     },
@@ -14,7 +14,7 @@
     "main": "dist/file.js",
     "types": "dist/file.d.ts",
     "dependencies": {
-        "@node-wot/core": "0.9.2",
+        "@yidingdian/core": "0.9.2",
         "rxjs": "^5.5.11"
     },
     "scripts": {
@@ -25,9 +25,9 @@
         "format": "prettier --write \"src/**/*.ts\" \"**/*.json\""
     },
     "bugs": {
-        "url": "https://github.com/eclipse-thingweb/node-wot/issues"
+        "url": "https://github.com/yidingdian/m-node-wot/issues"
     },
-    "homepage": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/binding-file#readme",
+    "homepage": "https://github.com/yidingdian/m-node-wot/tree/master/packages/binding-file#readme",
     "directories": {
         "test": "test"
     }

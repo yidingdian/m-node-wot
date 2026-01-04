@@ -1,10 +1,10 @@
 {
-    "name": "@node-wot/core",
+    "name": "@yidingdian/core",
     "version": "0.9.2",
     "description": "W3C Web of Things (WoT) Servient framework",
-    "author": "Eclipse Thingweb <thingweb-dev@eclipse.org> (https://thingweb.io/)",
+    "author": "yidingdian <iadom@163.com>",
     "license": "EPL-2.0 OR W3C-20150513",
-    "repository": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/core",
+    "repository": "https://github.com/yidingdian/m-node-wot/tree/master/packages/core",
     "publishConfig": {
         "access": "public"
     },
@@ -44,9 +44,9 @@
         "test": "mocha --require ts-node/register --extension ts"
     },
     "bugs": {
-        "url": "https://github.com/eclipse-thingweb/node-wot/issues"
+        "url": "https://github.com/yidingdian/m-node-wot/issues"
     },
-    "homepage": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/core#readme",
+    "homepage": "https://github.com/yidingdian/m-node-wot/tree/master/packages/core#readme",
     "directories": {
         "test": "test"
     },

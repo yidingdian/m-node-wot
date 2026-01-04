@@ -1,8 +1,8 @@
 {
-    "name": "@node-wot/binding-netconf",
+    "name": "@yidingdian/binding-netconf",
     "version": "0.9.2",
     "description": "NetConf client protocol binding for node-wot",
-    "author": "Eclipse Thingweb <thingweb-dev@eclipse.org> (https://thingweb.io/)",
+    "author": "yidingdian <iadom@163.com>",
     "license": "EPL-2.0 OR W3C-20150513",
     "repository": "https://github.com/thingweb/node-wot/tree/master/packages/binding-netconf",
     "publishConfig": {
@@ -14,7 +14,7 @@
     "main": "dist/netconf.js",
     "types": "dist/netconf.d.ts",
     "dependencies": {
-        "@node-wot/core": "0.9.2",
+        "@yidingdian/core": "0.9.2",
         "case-1.5.3": "npm:case@^1.5.3",
         "node-netconf": "^1.1.2",
         "rxjs": "^5.5.11",
@@ -28,9 +28,9 @@
         "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"**/*.json\""
     },
     "bugs": {
-        "url": "https://github.com/eclipse-thingweb/node-wot/issues"
+        "url": "https://github.com/yidingdian/m-node-wot/issues"
     },
-    "homepage": "https://github.com/eclipse-thingweb/node-wot/tree/master/packages/binding-netconf#readme",
+    "homepage": "https://github.com/yidingdian/m-node-wot/tree/master/packages/binding-netconf#readme",
     "directories": {
         "test": "test"
     },
