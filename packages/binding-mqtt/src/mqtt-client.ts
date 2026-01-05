@@ -43,6 +43,10 @@ declare interface MqttClientSecurityParameters {
     password: string;
 }
 
+function generateCorrelationData(): Buffer {
+    return Buffer.from(Math.random().toString(16).substring(2, 10));
+}
+
 export default class MqttClient implements ProtocolClient {
     private scheme: string;
     private pools: Map<string, MQTTMessagePool> = new Map();
@@ -56,6 +60,23 @@ export default class MqttClient implements ProtocolClient {
 
     private client?: mqtt.MqttClient;
 
+    private ensureV5Properties(options: mqtt.IClientPublishOptions) {
+        if (this.config.protocolVersion === 5) {
+            if (!options.properties) {
+                options.properties = {};
+            }
+            if (!options.properties.correlationData) {
+                options.properties.correlationData = generateCorrelationData();
+            }
+            if (!options.properties.userProperties) {
+                options.properties.userProperties = {};
+            }
+            if (!options.properties.userProperties.timestamp) {
+                options.properties.userProperties.timestamp = new Date().toISOString();
+            }
+        }
+    }
+
     private async publishAndWait(
         pool: MQTTMessagePool,
         topic: string,
@@ -64,6 +85,8 @@ export default class MqttClient implements ProtocolClient {
         responseTopic: string,
         contentType: string
     ): Promise<Content> {
+        this.ensureV5Properties(options);
+
         let resolve: (value: Content | PromiseLike<Content>) => void;
         let reject: (reason?: any) => void;
         const responsePromise = new Promise<Content>((res, rej) => {
@@ -136,6 +159,27 @@ export default class MqttClient implements ProtocolClient {
             filter,
             (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
                 next(new Content(contentType, Readable.from(message), packet));
+
+                if (
+                    this.config.protocolVersion === 5 &&
+                    packet.properties &&
+                    packet.properties.responseTopic
+                ) {
+                    const correlationData = packet.properties?.correlationData ?? generateCorrelationData();
+                    const options: mqtt.IClientPublishOptions = {
+                        properties: {
+                            correlationData,
+                            userProperties: {
+                                timestamp: new Date().toISOString(),
+                            },
+                        },
+                    };
+                    pool.publish(
+                        packet.properties.responseTopic,
+                        Buffer.from(JSON.stringify({ statusCode: 0, statusDesc: "OK" })),
+                        options
+                    );
+                }
             },
             (e: Error) => {
                 if (error) error(e);
@@ -167,7 +211,8 @@ export default class MqttClient implements ProtocolClient {
 
         const explicitResponseTopic = form["mqv:properties"] && form["mqv:properties"].responseTopic;
         // Default to adding '/response' if properties are missing and it's not a retained read
-        const useDefaultResponseTopic = !form["mqv:properties"] && !form["mqv:retain"];
+        const useDefaultResponseTopic =
+            this.config.protocolVersion === 5 && !form["mqv:properties"] && !form["mqv:retain"];
 
         if (explicitResponseTopic || useDefaultResponseTopic) {
             const filterString = typeof filter === "string" ? filter : undefined;
@@ -185,7 +230,9 @@ export default class MqttClient implements ProtocolClient {
             const options: mqtt.IClientPublishOptions = {
                 qos: mapQoS(form["mqv:qos"]),
                 retain: form["mqv:retain"],
-                properties: form["mqv:properties"],
+                properties: form["mqv:properties"] ?? {
+                    responseTopic: responseTopic,
+                },
             };
 
             return this.publishAndWait(
@@ -231,10 +278,13 @@ export default class MqttClient implements ProtocolClient {
         // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
         // Fall back to form["mqv:topic"] in that case.
         const _path = requestUri.pathname.slice(1) || '';
-        const topic = _path.length ? _path : form["mqv:topic"];
+        const topic = _path.length ? _path : form["mqv:topic"]??form["mqv:filter"];
 
         if (!topic) {
             throw new Error("No topic provided");
+        }
+        if (Array.isArray(topic)) {
+            throw new Error("Topic cannot be an array");
         }
 
         let pool = this.pools.get(brokerUri);
@@ -252,9 +302,18 @@ export default class MqttClient implements ProtocolClient {
             retain: form["mqv:retain"],
             qos: mapQoS(form["mqv:qos"]),
         };
+
         if (content && content.meta && content.meta.properties) {
-            options.properties = content.meta.properties;
+            options.properties = { ...options.properties, ...content.meta.properties };
+            if (content.meta.properties.userProperties) {
+                options.properties!.userProperties = {
+                    ...options.properties!.userProperties,
+                    ...content.meta.properties.userProperties,
+                };
+            }
         }
+
+        this.ensureV5Properties(options);
 
         if (options.properties && options.properties.responseTopic) {
             return this.publishAndWait(
@@ -297,9 +356,18 @@ export default class MqttClient implements ProtocolClient {
             retain: form["mqv:retain"],
             qos: mapQoS(form["mqv:qos"]),
         };
+
         if (content && content.meta && content.meta.properties) {
-            options.properties = content.meta.properties;
+            options.properties = { ...options.properties, ...content.meta.properties };
+            if (content.meta.properties.userProperties) {
+                options.properties!.userProperties = {
+                    ...options.properties!.userProperties,
+                    ...content.meta.properties.userProperties,
+                };
+            }
         }
+
+        this.ensureV5Properties(options);
 
         if (options.properties && options.properties.responseTopic) {
             return this.publishAndWait(

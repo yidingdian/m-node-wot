@@ -126,7 +126,7 @@ describe("MQTT client v5 support", () => {
         const publishPacket = (await waitForPacket("publish")) as mqttPacket.IPublishPacket;
         expect(publishPacket).to.exist;
         expect(publishPacket.properties).to.exist;
-        expect(publishPacket.properties!.userProperties).to.deep.equal(properties.userProperties);
+        expect(publishPacket.properties!.userProperties).to.include(properties.userProperties);
         expect(publishPacket.properties!.contentType).to.equal(properties.contentType);
     });
 
@@ -149,7 +149,7 @@ describe("MQTT client v5 support", () => {
         const publishPacket = (await waitForPacket("publish")) as mqttPacket.IPublishPacket;
         expect(publishPacket).to.exist;
         expect(publishPacket.properties).to.exist;
-        expect(publishPacket.properties!.userProperties).to.deep.equal(properties.userProperties);
+        expect(publishPacket.properties!.userProperties).to.include(properties.userProperties);
     });
 
     it("should expose properties in Content when subscribing (MQTT v5)", (done) => {
