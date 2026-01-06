@@ -232,8 +232,8 @@ class TrapClient implements ProtocolClient {
         return await this.trap(form);
     }
 
-    public async writeResource(form: Form, content: Content): Promise<void> {
-        await this.trap(form, content);
+    public async writeResource(form: Form, content: Content): Promise<void | Content> {
+        return await this.trap(form, content);
     }
 
     public async invokeResource(form: Form, content: Content): Promise<Content> {
@@ -305,7 +305,7 @@ class TestProtocolClient implements ProtocolClient {
         throw new Error("Method not implemented.");
     }
 
-    writeResource(form: Form, content: Content): Promise<void> {
+    writeResource(form: Form, content: Content): Promise<void | Content> {
         throw new Error("Method not implemented.");
     }
 
@@ -384,6 +384,20 @@ class WoTClientTest {
         const result = await thing.readProperty("aProperty");
         expect(result).not.to.be.null;
 
+        const value = await result.value();
+        expect(value?.toString()).to.equal("42");
+    }
+
+    @test async "write a Property with response"() {
+        // let the client return 42
+        WoTClientTest.clientFactory.setTrap(() => {
+            return new Content("application/json", Readable.from(Buffer.from("42")));
+        });
+        const td = (await WoTClientTest.WoTHelpers.fetch("td://foo")) as ThingDescription;
+        const thing = await WoTClientTest.WoT.consume(td);
+
+        const result = (await thing.writeProperty("aProperty", 123)) as any;
+        expect(result).not.to.be.undefined;
         const value = await result.value();
         expect(value?.toString()).to.equal("42");
     }

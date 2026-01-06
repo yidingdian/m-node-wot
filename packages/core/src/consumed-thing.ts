@@ -693,7 +693,12 @@ export default class ConsumedThing extends Thing implements IConsumedThing {
 
         // uriVariables ?
         const formWithUriVariables = this.handleUriVariables(tp, form, options);
-        await client.writeResource(formWithUriVariables, content);
+        const result = await client.writeResource(formWithUriVariables, content);
+        if (result) {
+            return this.handleInteractionOutput(result, formWithUriVariables, {
+                type: 'object',
+            }) as any;
+        }
     }
 
     async writeMultipleProperties(valueMap: WoT.PropertyWriteMap, options?: WoT.InteractionOptions): Promise<void> {

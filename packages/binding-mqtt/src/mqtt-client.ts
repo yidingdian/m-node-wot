@@ -212,7 +212,7 @@ export default class MqttClient implements ProtocolClient {
         const explicitResponseTopic = form["mqv:properties"] && form["mqv:properties"].responseTopic;
         // Default to adding '/response' if properties are missing and it's not a retained read
         const useDefaultResponseTopic =
-            this.config.protocolVersion === 5 && !form["mqv:properties"] && !form["mqv:retain"];
+            this.config.protocolVersion === 5 && !form["mqv:properties"];
 
         if (explicitResponseTopic || useDefaultResponseTopic) {
             const filterString = typeof filter === "string" ? filter : undefined;
@@ -235,7 +235,7 @@ export default class MqttClient implements ProtocolClient {
                 },
             };
 
-            return this.publishAndWait(
+            return await this.publishAndWait(
                 pool,
                 topic,
                 Buffer.from(""),
@@ -303,6 +303,12 @@ export default class MqttClient implements ProtocolClient {
             qos: mapQoS(form["mqv:qos"]),
         };
 
+        if (this.config.protocolVersion === 5) {
+            options.properties = {
+                responseTopic: `${topic}/response`,
+            };
+        }
+
         if (content && content.meta && content.meta.properties) {
             options.properties = { ...options.properties, ...content.meta.properties };
             if (content.meta.properties.userProperties) {
@@ -316,7 +322,7 @@ export default class MqttClient implements ProtocolClient {
         this.ensureV5Properties(options);
 
         if (options.properties && options.properties.responseTopic) {
-            return this.publishAndWait(
+            let res = await this.publishAndWait(
                 pool,
                 topic,
                 buffer,
@@ -335,10 +341,13 @@ export default class MqttClient implements ProtocolClient {
         // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
         // Fall back to form["mqv:topic"] in that case.
         const _path = requestUri.pathname.slice(1) || '';
-        const topic = _path.length ? _path : form["mqv:topic"];
+        const topic = _path.length ? _path : form["mqv:topic"]??form["mqv:filter"];
 
         if (!topic) {
             throw new Error("No topic provided");
+        }
+        if (Array.isArray(topic)) {
+            throw new Error("Topic cannot be an array");
         }
 
         let pool = this.pools.get(brokerUri);
@@ -357,6 +366,12 @@ export default class MqttClient implements ProtocolClient {
             qos: mapQoS(form["mqv:qos"]),
         };
 
+        if (this.config.protocolVersion === 5) {
+             options.properties = {
+                responseTopic: `${topic}/response`,
+            };
+        }
+
         if (content && content.meta && content.meta.properties) {
             options.properties = { ...options.properties, ...content.meta.properties };
             if (content.meta.properties.userProperties) {
@@ -370,7 +385,7 @@ export default class MqttClient implements ProtocolClient {
         this.ensureV5Properties(options);
 
         if (options.properties && options.properties.responseTopic) {
-            return this.publishAndWait(
+            return await this.publishAndWait(
                 pool,
                 topic,
                 buffer,

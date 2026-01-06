@@ -120,7 +120,7 @@ describe("MQTT client v5 support", () => {
         };
         const content = new Content("application/json", Readable.from(Buffer.from("test")), { properties });
 
-        await client.invokeResource(form, content);
+        const invokePromise = client.invokeResource(form, content);
 
         // Find the publish packet
         const publishPacket = (await waitForPacket("publish")) as mqttPacket.IPublishPacket;
@@ -128,6 +128,25 @@ describe("MQTT client v5 support", () => {
         expect(publishPacket.properties).to.exist;
         expect(publishPacket.properties!.userProperties).to.include(properties.userProperties);
         expect(publishPacket.properties!.contentType).to.equal(properties.contentType);
+
+        if (publishPacket.properties && publishPacket.properties.responseTopic) {
+            const response = mqttPacket.generate(
+                {
+                    cmd: "publish",
+                    topic: publishPacket.properties.responseTopic,
+                    payload: Buffer.from("response"),
+                    qos: 0,
+                    retain: false,
+                    dup: false,
+                    properties: {
+                        correlationData: publishPacket.properties.correlationData,
+                    },
+                },
+                { protocolVersion: 5 }
+            );
+            if (clientSocket) clientSocket.write(response);
+        }
+        await invokePromise;
     });
 
     it("should pass properties when writing a resource (MQTT v5)", async () => {
@@ -144,12 +163,30 @@ describe("MQTT client v5 support", () => {
         };
         const content = new Content("application/json", Readable.from(Buffer.from("test")), { properties });
 
-        await client.writeResource(form, content);
+        const writePromise = client.writeResource(form, content);
 
         const publishPacket = (await waitForPacket("publish")) as mqttPacket.IPublishPacket;
         expect(publishPacket).to.exist;
         expect(publishPacket.properties).to.exist;
         expect(publishPacket.properties!.userProperties).to.include(properties.userProperties);
+        if (publishPacket.properties && publishPacket.properties.responseTopic) {
+            const response = mqttPacket.generate(
+                {
+                    cmd: "publish",
+                    topic: publishPacket.properties.responseTopic,
+                    payload: Buffer.from("response"),
+                    qos: 0,
+                    retain: false,
+                    dup: false,
+                    properties: {
+                        correlationData: publishPacket.properties.correlationData,
+                    },
+                },
+                { protocolVersion: 5 }
+            );
+            if (clientSocket) clientSocket.write(response);
+        }
+        await writePromise;
     });
 
     it("should expose properties in Content when subscribing (MQTT v5)", (done) => {
@@ -202,6 +239,7 @@ describe("MQTT client v5 support", () => {
         this.timeout(5000);
         client = new MqttClient({ protocolVersion: 5, reconnectPeriod: 0 } as any);
         const topic = "test/read";
+        const responseTopic = "test/read/response";
         const form: MqttForm = {
             href: `${brokerUri}/${topic}`,
             "mqv:controlPacket": "subscribe",
@@ -212,10 +250,6 @@ describe("MQTT client v5 support", () => {
                 "incoming-prop": "incoming-value",
             },
         };
-
-        // For readResource, it subscribes, waits for message.
-        // We need to send the message after subscription.
-        // We can hook into the server to send message when subscribe is received.
 
         const originalListener = server.listeners("connection")[0] as (socket: net.Socket) => void;
         server.removeListener("connection", originalListener);
@@ -245,23 +279,30 @@ describe("MQTT client v5 support", () => {
                         { protocolVersion: 5 }
                     );
                     socket.write(suback);
-
-                    // Send the retained message immediately after suback
-                    setTimeout(() => {
-                        const publish = mqttPacket.generate(
-                            {
-                                cmd: "publish",
-                                topic: topic,
-                                payload: Buffer.from("test"),
-                                qos: 0,
-                                retain: true,
-                                dup: false,
-                                properties: properties,
-                            },
-                            { protocolVersion: 5 }
-                        );
-                        socket.write(publish);
-                    }, 200);
+                } else if (packet.cmd === "publish") {
+                    // Check if this is the request (publish to 'test/read')
+                    const pubPacket = packet as mqttPacket.IPublishPacket;
+                    if (pubPacket.topic === topic && pubPacket.properties?.responseTopic === responseTopic) {
+                        // Send response
+                        setTimeout(() => {
+                            const publish = mqttPacket.generate(
+                                {
+                                    cmd: "publish",
+                                    topic: responseTopic,
+                                    payload: Buffer.from("test"),
+                                    qos: 0,
+                                    retain: false,
+                                    dup: false,
+                                    properties: {
+                                        ...properties,
+                                        correlationData: pubPacket.properties?.correlationData,
+                                    },
+                                },
+                                { protocolVersion: 5 }
+                            );
+                            socket.write(publish);
+                        }, 50);
+                    }
                 } else if (packet.cmd === "unsubscribe") {
                     const unsuback = mqttPacket.generate(
                         {
