@@ -83,7 +83,7 @@ export function setContextLanguage(thing: ThingDescription, language: string, fo
 
 /** Parses a TD into a Thing object */
 export function parseTD(td: string, normalize?: boolean): Thing {
-    debug(`parseTD() parsing\n\`\`\`\n${td}\n\`\`\``);
+    // debug(`parseTD() parsing\n\`\`\`\n${td}\n\`\`\``);
 
     // remove a potential Byte Order Mark (BOM)
     // see https://github.com/eclipse-thingweb/node-wot/issues/109
