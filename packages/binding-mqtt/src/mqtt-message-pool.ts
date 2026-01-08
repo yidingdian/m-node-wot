@@ -22,9 +22,18 @@ export default class MQTTMessagePool {
     client?: mqtt.MqttClient;
     subscribers: Map<string, (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => void> = new Map();
     errors: Map<string, (error: Error) => void> = new Map();
+    private connectionPromise?: Promise<void>;
 
     public async connect(brokerURI: string, config: MqttClientConfig): Promise<void> {
-        if (this.client === undefined) {
+        if (this.client) {
+            return;
+        }
+        if (this.connectionPromise) {
+            // 有其他并发connect正在进行，等待其完成
+            await this.connectionPromise;
+            return;
+        }
+        this.connectionPromise = (async () => {
             this.client = await mqtt.connectAsync(brokerURI, config);
             this.client.on("message", (receivedTopic: string, payload: Buffer, packet: mqtt.IPublishPacket) => {
                 debug(
@@ -41,6 +50,11 @@ export default class MQTTMessagePool {
                     errorCallback(error);
                 });
             });
+        })();
+        try {
+            await this.connectionPromise;
+        } finally {
+            this.connectionPromise = undefined;
         }
     }
 

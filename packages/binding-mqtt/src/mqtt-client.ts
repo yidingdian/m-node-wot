@@ -277,8 +277,8 @@ export default class MqttClient implements ProtocolClient {
         const brokerUri = `${this.scheme}://${requestUri.host}`;
         // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
         // Fall back to form["mqv:topic"] in that case.
-        const _path = requestUri.pathname.slice(1) || '';
-        const topic = _path.length ? _path : form["mqv:topic"]??form["mqv:filter"];
+        const _path = requestUri.pathname.slice(1) || "";
+        const topic = _path.length ? _path : form["mqv:topic"] ?? form["mqv:filter"];
 
         if (!topic) {
             throw new Error("No topic provided");
@@ -309,7 +309,7 @@ export default class MqttClient implements ProtocolClient {
             };
         }
 
-        if (content && content.meta && content.meta.properties) {
+        if (content && content?.meta?.properties) {
             options.properties = { ...options.properties, ...content.meta.properties };
             if (content.meta.properties.userProperties) {
                 options.properties!.userProperties = {
@@ -322,7 +322,7 @@ export default class MqttClient implements ProtocolClient {
         this.ensureV5Properties(options);
 
         if (options.properties && options.properties.responseTopic) {
-            let res = await this.publishAndWait(
+            return await this.publishAndWait(
                 pool,
                 topic,
                 buffer,

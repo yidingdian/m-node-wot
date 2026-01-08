@@ -67,10 +67,12 @@ const myThingDesc = {
         aProperty: {
             type: "integer",
             readOnly: false,
+            output: { type: "integer" },
             forms: [
                 {
                     href: "testdata://host/athing/properties/aproperty{?idTest,idTestGlobal}",
                     mediaType: "application/json",
+                    response: { contentType: "application/json" }
                 },
             ],
             uriVariables: {

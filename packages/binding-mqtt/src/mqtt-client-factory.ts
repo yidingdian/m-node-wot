@@ -19,16 +19,22 @@
 
 import { ProtocolClientFactory, ProtocolClient, createDebugLogger } from "@node-wot/core";
 import MqttClient from "./mqtt-client";
+import * as url from "url";
 
 const debug = createDebugLogger("binding-mqtt", "mqtt-client-factory");
 
 export default class MqttClientFactory implements ProtocolClientFactory {
     public readonly scheme: string = "mqtt";
-    private readonly clients: Array<ProtocolClient> = [];
+    private readonly clientMap: Map<string, ProtocolClient> = new Map();
 
-    getClient(): ProtocolClient {
+    getClient(brokerUri?: string): ProtocolClient {
+        const key = brokerUri ? this._normalizeUri(brokerUri) : "default";
+        if (this.clientMap.has(key)) {
+            debug(`Reusing existing MQTT client for broker '${key}'`);
+            return this.clientMap.get(key)!;
+        }
         const client = new MqttClient();
-        this.clients.push(client);
+        this.clientMap.set(key, client);
         return client;
     }
 
@@ -36,9 +42,21 @@ export default class MqttClientFactory implements ProtocolClientFactory {
         return true;
     }
 
+    private _normalizeUri(uri: string): string {
+        // for MQTT the broker URI without path is sufficient to identify a broker
+        try {
+            const u = new url.URL(uri);
+            return `${u.protocol}//${u.host}`;
+        } catch {
+            return uri;
+        }
+
+    }
+
     destroy(): boolean {
         debug(`MqttClientFactory stopping all clients for '${this.scheme}'`);
-        this.clients.forEach((client) => client.stop());
+        this.clientMap.forEach((client) => client.stop());
+        this.clientMap.clear();
         return true;
     }
 }

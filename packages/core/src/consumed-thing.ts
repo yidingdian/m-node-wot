@@ -695,9 +695,9 @@ export default class ConsumedThing extends Thing implements IConsumedThing {
         const formWithUriVariables = this.handleUriVariables(tp, form, options);
         const result = await client.writeResource(formWithUriVariables, content);
         if (result) {
-            return this.handleInteractionOutput(result, formWithUriVariables, {
-                type: 'object',
-            }) as any;
+            // 优先使用 property 的 output schema，无则默认 object
+            const outputSchema = tp.output ?? { type: 'object' };
+            return this.handleInteractionOutput(result, formWithUriVariables, outputSchema) as any;
         }
     }
 
