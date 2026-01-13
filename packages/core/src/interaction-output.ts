@@ -42,6 +42,7 @@ export class InteractionOutput implements WoT.InteractionOutput {
     dataUsed: boolean;
     form?: WoT.Form;
     schema?: WoT.DataSchema;
+    meta?: { [key: string]: any };
 
     public get data(): ReadableStream {
         if (this.#stream) {
@@ -62,6 +63,7 @@ export class InteractionOutput implements WoT.InteractionOutput {
         this.form = form;
         this.schema = schema;
         this.dataUsed = false;
+        this.meta = content.meta;
     }
 
     async arrayBuffer(): Promise<ArrayBuffer> {
