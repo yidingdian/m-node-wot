@@ -37,7 +37,7 @@ export default class MQTTMessagePool {
             this.client = await mqtt.connectAsync(brokerURI, config);
             this.client.on("message", (receivedTopic: string, payload: Buffer, packet: mqtt.IPublishPacket) => {
                 debug(
-                    `Received MQTT message from ${brokerURI} (topic: ${receivedTopic}, data length: ${payload.length})`
+                    `Received MQTT message from ${brokerURI} (topic: ${receivedTopic}, data length: ${payload.length})`, packet?.properties
                 );
                 this.subscribers.get(receivedTopic)?.(receivedTopic, payload, packet);
             });
