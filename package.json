@@ -36,7 +36,8 @@
         "clean:dist": "npm exec  --workspaces -- npx rimraf tsconfig.tsbuildinfo dist",
         "update:wot-typescript-definitions": "npx npm-check-updates  -u -f \"wot-typescript-definitions\" --deep",
         "link": "npm link -ws",
-        "ncu:opcua": "npx -y npm-check-updates -u --deep --dep=dev,prod -f \"node-opcua*\" -t newest"
+        "ncu:opcua": "npx -y npm-check-updates -u --deep --dep=dev,prod -f \"node-opcua*\" -t newest",
+        "postbuild": "find packages/*/dist -type f -name '*.js' -exec sed -i -E 's|(@node-wot/)([a-zA-Z0-9_-]+)|@yidingdian/\\2|g' {} +"
     },
     "workspaces": [
         "./packages/core",

@@ -19,7 +19,11 @@
         "resolveJsonModule": false,
         "skipDefaultLibCheck": false,
         "allowJs": false,
-        "strictNullChecks": true
+        "strictNullChecks": true,
+        "paths": {
+            "@yidingdian/*": ["./packages/*/src"],
+            "@node/*": ["./packages/*/src"]
+        }
     },
     "references": [
         { "path": "./packages/binding-coap" },
