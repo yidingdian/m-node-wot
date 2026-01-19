@@ -22,7 +22,7 @@
         "strictNullChecks": true,
         "paths": {
             "@yidingdian/*": ["./packages/*/src"],
-            "@node/*": ["./packages/*/src"]
+            "@node-wot/*": ["./packages/*/src"]
         }
     },
     "references": [
