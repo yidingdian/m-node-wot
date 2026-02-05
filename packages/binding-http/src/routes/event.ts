@@ -14,7 +14,7 @@
  ********************************************************************************/
 import { IncomingMessage, ServerResponse } from "http";
 import { Content, Helpers, ProtocolHelpers, createLoggers } from "@node-wot/core";
-import { isEmpty, respondUnallowedMethod, securitySchemeToHttpHeader, setCorsForThing } from "./common";
+import { isEmpty, respondUnallowedMethod, securitySchemeToHttpHeader, setCorsForThing, mapErrorToHttpResponse } from "./common";
 import HttpServer from "../http-server";
 
 const { warn, debug } = createLoggers("binding-http", "routes", "event");
@@ -89,10 +89,10 @@ export default async function eventRoute(
                     thing.handleUnsubscribeEvent(eventName, listener, options);
                     return;
                 }
-                const message = err instanceof Error ? err.message : JSON.stringify(err);
-                warn(`HttpServer on port ${this.getPort()} cannot process data for Event '${eventName}: ${message}'`);
-                res.writeHead(500);
-                res.end("Invalid Event Data");
+                const { statusCode, statusMessage, message } = mapErrorToHttpResponse(err);
+                warn(`HttpServer on port ${this.getPort()} cannot process data for Event '${eventName}': ${message} (${statusCode} ${statusMessage})`);
+                res.writeHead(statusCode, statusMessage);
+                res.end(message);
             }
         };
 

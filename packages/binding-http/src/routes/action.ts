@@ -20,6 +20,7 @@ import {
     securitySchemeToHttpHeader,
     setCorsForThing,
     validOrDefaultRequestContentType,
+    mapErrorToHttpResponse,
 } from "./common";
 import HttpServer from "../http-server";
 
@@ -101,10 +102,10 @@ export default async function actionRoute(
                 res.end();
             }
         } catch (err) {
-            const message = err instanceof Error ? err.message : JSON.stringify(err);
+            const { statusCode, statusMessage, message } = mapErrorToHttpResponse(err);
 
-            error(`HttpServer on port ${this.getPort()} got internal error on invoke '${req.url}': ${message}`);
-            res.writeHead(500);
+            error(`HttpServer on port ${this.getPort()} got error on invoke '${req.url}': ${message} (${statusCode} ${statusMessage})`);
+            res.writeHead(statusCode, statusMessage);
             res.end(message);
         }
     } else {

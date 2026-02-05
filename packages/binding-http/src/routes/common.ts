@@ -17,6 +17,130 @@ import { IncomingMessage, ServerResponse } from "http";
 
 const { debug, warn } = createLoggers("binding-http", "routes", "common");
 
+/**
+ * Error to HTTP status code mapping result
+ */
+export interface HttpErrorResponse {
+    statusCode: number;
+    statusMessage: string;
+    message: string;
+}
+
+/**
+ * Map an error to appropriate HTTP status code and message
+ *
+ * This function analyzes the error message/type and returns
+ * the most appropriate HTTP status code instead of always returning 500.
+ *
+ * @param err - The error to map
+ * @returns HttpErrorResponse with status code, status message, and error message
+ */
+export function mapErrorToHttpResponse(err: unknown): HttpErrorResponse {
+    const message = err instanceof Error ? err.message : JSON.stringify(err);
+    const lowerMessage = message.toLowerCase();
+
+    // Timeout errors -> 504 Gateway Timeout
+    if (lowerMessage.includes("timeout") || lowerMessage.includes("timed out")) {
+        return {
+            statusCode: 504,
+            statusMessage: "Timeout",
+            message: message,
+        };
+    }
+
+    // Connection refused/failed -> 502 Bad Gateway
+    if (
+        lowerMessage.includes("econnrefused") ||
+        lowerMessage.includes("connection refused") ||
+        lowerMessage.includes("connection failed") ||
+        lowerMessage.includes("econnreset")
+    ) {
+        return {
+            statusCode: 502,
+            statusMessage: "Bad Gateway",
+            message: message,
+        };
+    }
+
+    // Not found errors -> 404 Not Found
+    if (lowerMessage.includes("not found") || lowerMessage.includes("does not exist")) {
+        return {
+            statusCode: 404,
+            statusMessage: "Not Found",
+            message: message,
+        };
+    }
+
+    // Invalid input/validation errors -> 400 Bad Request
+    if (
+        lowerMessage.includes("invalid") ||
+        lowerMessage.includes("validation") ||
+        lowerMessage.includes("malformed") ||
+        lowerMessage.includes("bad request")
+    ) {
+        return {
+            statusCode: 400,
+            statusMessage: "Bad Request",
+            message: message,
+        };
+    }
+
+    // Unauthorized/authentication errors -> 401 Unauthorized
+    if (
+        lowerMessage.includes("unauthorized") ||
+        lowerMessage.includes("authentication") ||
+        lowerMessage.includes("not authenticated")
+    ) {
+        return {
+            statusCode: 401,
+            statusMessage: "Unauthorized",
+            message: message,
+        };
+    }
+
+    // Forbidden/permission errors -> 403 Forbidden
+    if (
+        lowerMessage.includes("forbidden") ||
+        lowerMessage.includes("permission denied") ||
+        lowerMessage.includes("access denied")
+    ) {
+        return {
+            statusCode: 403,
+            statusMessage: "Forbidden",
+            message: message,
+        };
+    }
+
+    // Service unavailable -> 503 Service Unavailable
+    if (
+        lowerMessage.includes("unavailable") ||
+        lowerMessage.includes("service unavailable") ||
+        lowerMessage.includes("offline")
+    ) {
+        return {
+            statusCode: 503,
+            statusMessage: "Service Unavailable",
+            message: message,
+        };
+    }
+
+    // Conflict errors -> 409 Conflict
+    if (lowerMessage.includes("conflict") || lowerMessage.includes("already exists")) {
+        return {
+            statusCode: 409,
+            statusMessage: "Conflict",
+            message: message,
+        };
+    }
+
+    // Default: 500 Internal Server Error
+    return {
+        statusCode: 500,
+        statusMessage: "Internal Server Error",
+        message: message,
+    };
+}
+
 export function respondUnallowedMethod(
     req: IncomingMessage,
     res: ServerResponse,

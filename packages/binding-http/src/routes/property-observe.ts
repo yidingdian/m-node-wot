@@ -14,7 +14,7 @@
  ********************************************************************************/
 import { IncomingMessage, ServerResponse } from "http";
 import { Content, Helpers, ProtocolHelpers, createLoggers } from "@node-wot/core";
-import { isEmpty, respondUnallowedMethod, securitySchemeToHttpHeader, setCorsForThing } from "./common";
+import { isEmpty, respondUnallowedMethod, securitySchemeToHttpHeader, setCorsForThing, mapErrorToHttpResponse } from "./common";
 import HttpServer from "../http-server";
 
 const { debug, warn } = createLoggers("binding-http", "routes", "property", "observe");
@@ -91,14 +91,14 @@ export default async function propertyObserveRoute(
                     thing.handleUnobserveProperty(propertyName, listener, options);
                     return;
                 }
-                const message = err instanceof Error ? err.message : JSON.stringify(err);
+                const { statusCode, statusMessage, message } = mapErrorToHttpResponse(err);
                 warn(
                     `HttpServer on port ${this.getPort()} cannot process data for Property '${
                         _params.property
-                    }: ${message}'`
+                    }': ${message} (${statusCode} ${statusMessage})`
                 );
-                res.writeHead(500);
-                res.end("Invalid Property Data");
+                res.writeHead(statusCode, statusMessage);
+                res.end(message);
             }
         };
         await thing.handleObserveProperty(_params.property, listener, options);

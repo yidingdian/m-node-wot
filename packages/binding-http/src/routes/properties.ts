@@ -14,7 +14,7 @@
  ********************************************************************************/
 import { IncomingMessage, ServerResponse } from "http";
 import { ContentSerdes, Helpers, PropertyContentMap, createLoggers } from "@node-wot/core";
-import { respondUnallowedMethod, securitySchemeToHttpHeader, setCorsForThing } from "./common";
+import { respondUnallowedMethod, securitySchemeToHttpHeader, setCorsForThing, mapErrorToHttpResponse } from "./common";
 import HttpServer from "../http-server";
 
 const { error } = createLoggers("binding-http", "routes", "properties");
@@ -74,10 +74,10 @@ export default async function propertiesRoute(
             }
             res.end(JSON.stringify(recordResponse));
         } catch (err) {
-            const message = err instanceof Error ? err.message : JSON.stringify(err);
+            const { statusCode, statusMessage, message } = mapErrorToHttpResponse(err);
 
-            error(`HttpServer on port ${this.getPort()} got internal error on invoke '${req.url}': ${message}`);
-            res.writeHead(500);
+            error(`HttpServer on port ${this.getPort()} got error on readAll '${req.url}': ${message} (${statusCode} ${statusMessage})`);
+            res.writeHead(statusCode, statusMessage);
             res.end(message);
         }
     } else if (req.method === "HEAD") {

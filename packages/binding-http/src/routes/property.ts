@@ -20,6 +20,7 @@ import {
     securitySchemeToHttpHeader,
     setCorsForThing,
     validOrDefaultRequestContentType,
+    mapErrorToHttpResponse,
 } from "./common";
 import HttpServer from "../http-server";
 
@@ -99,10 +100,10 @@ export default async function propertyRoute(
             res.writeHead(200);
             content.body.pipe(res);
         } catch (err) {
-            const message = err instanceof Error ? err.message : JSON.stringify(err);
+            const { statusCode, statusMessage, message } = mapErrorToHttpResponse(err);
 
-            error(`HttpServer on port ${this.getPort()} got internal error on read '${req.url}': ${message}`);
-            res.writeHead(500);
+            error(`HttpServer on port ${this.getPort()} got error on read '${req.url}': ${message} (${statusCode} ${statusMessage})`);
+            res.writeHead(statusCode, statusMessage);
             res.end(message);
         }
     } else if (req.method === "PUT") {
@@ -118,10 +119,10 @@ export default async function propertyRoute(
             res.writeHead(204);
             res.end("Changed");
         } catch (err) {
-            const message = err instanceof Error ? err.message : JSON.stringify(err);
+            const { statusCode, statusMessage, message } = mapErrorToHttpResponse(err);
 
-            error(`HttpServer on port ${this.getPort()} got internal error on invoke '${req.url}': ${message}`);
-            res.writeHead(500);
+            error(`HttpServer on port ${this.getPort()} got error on write '${req.url}': ${message} (${statusCode} ${statusMessage})`);
+            res.writeHead(statusCode, statusMessage);
             res.end(message);
         }
         // resource found and response sent
