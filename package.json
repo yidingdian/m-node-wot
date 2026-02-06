@@ -38,7 +38,7 @@
         "link": "npm link -ws",
         "ncu:opcua": "npx -y npm-check-updates -u --deep --dep=dev,prod -f \"node-opcua*\" -t newest",
         "postinstall": "node scripts/link-node-wot-alias.js",
-        "postbuild": "find packages/*/dist -type f -name '*.js' -exec sed -i -E 's|(@node-wot/)([a-zA-Z0-9_-]+)|@yidingdian/\\2|g' {} +"
+        "postbuild": "find packages/*/dist -type f \\( -name '*.js' -o -name '*.d.ts' \\) -exec sed -i -E 's|(@node-wot/)([a-zA-Z0-9_-]+)|@yidingdian/\\2|g' {} +"
     },
     "workspaces": [
         "./packages/core",

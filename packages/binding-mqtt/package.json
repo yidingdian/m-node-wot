@@ -21,6 +21,7 @@
     },
     "scripts": {
         "build": "tsc -b",
+        "postbuild": "find dist -type f \\( -name '*.js' -o -name '*.d.ts' \\) -exec sed -i -E 's|(@node-wot/)([a-zA-Z0-9_-]+)|@yidingdian/\\2|g' {} +",
         "test": "mocha --require ts-node/register --extension ts",
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
