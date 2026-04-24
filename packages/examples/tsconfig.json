@@ -3,9 +3,23 @@
     "compilerOptions": {
         "outDir": "dist",
         "module": "Node16",
+        "rootDir": "src",
         "target": "ES2021",
         "sourceMap": false,
         "removeComments": false
     },
-    "references": []
+    "include": ["src/**/*"],
+    "references": [
+        { "path": "../binding-coap" },
+        { "path": "../binding-file" },
+        { "path": "../binding-http" },
+        { "path": "../binding-mbus" },
+        { "path": "../binding-modbus" },
+        { "path": "../binding-mqtt" },
+        { "path": "../binding-netconf" },
+        { "path": "../binding-opcua" },
+        { "path": "../binding-queue" },
+        { "path": "../binding-websockets" },
+        { "path": "../core" }
+    ]
 }

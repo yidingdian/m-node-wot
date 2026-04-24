@@ -34,6 +34,7 @@
         { "path": "./packages/binding-mqtt" },
         { "path": "./packages/binding-netconf" },
         { "path": "./packages/binding-opcua" },
+        { "path": "./packages/binding-queue" },
         { "path": "./packages/binding-websockets" },
         { "path": "./packages/cli" },
         { "path": "./packages/core" },

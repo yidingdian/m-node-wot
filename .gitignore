@@ -59,6 +59,7 @@ packages/*
 !packages/cli
 !packages/browser-bundle
 !packages/examples
+!packages/binding-queue
 
 # JetBrains IDEs
 .idea/
