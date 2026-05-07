@@ -43,6 +43,13 @@ declare interface MqttClientSecurityParameters {
     password: string;
 }
 
+interface PendingRequest {
+    contentType: string;
+    resolve: (value: Content) => void;
+    reject: (reason: Error) => void;
+    timer?: NodeJS.Timeout;
+}
+
 function generateCorrelationData(): Buffer {
     return Buffer.from(Math.random().toString(16).substring(2, 10));
 }
@@ -50,6 +57,8 @@ function generateCorrelationData(): Buffer {
 export default class MqttClient implements ProtocolClient {
     private scheme: string;
     private pools: Map<string, MQTTMessagePool> = new Map();
+    // pool -> responseTopic -> correlationDataHex -> PendingRequest
+    private pendingByPool: Map<MQTTMessagePool, Map<string, Map<string, PendingRequest>>> = new Map();
 
     constructor(
         private config: MqttClientConfig = {},
@@ -77,6 +86,111 @@ export default class MqttClient implements ProtocolClient {
         }
     }
 
+    private pendingForPool(pool: MQTTMessagePool): Map<string, Map<string, PendingRequest>> {
+        let topicMap = this.pendingByPool.get(pool);
+        if (!topicMap) {
+            topicMap = new Map();
+            this.pendingByPool.set(pool, topicMap);
+        }
+        return topicMap;
+    }
+
+    private async ensureResponseListener(pool: MQTTMessagePool, responseTopic: string): Promise<Map<string, PendingRequest>> {
+        const topicMap = this.pendingForPool(pool);
+        const existing = topicMap.get(responseTopic);
+        if (existing) return existing;
+
+        const reqMap = new Map<string, PendingRequest>();
+        topicMap.set(responseTopic, reqMap);
+
+        try {
+            await pool.subscribe(
+                responseTopic,
+                (_topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
+                    this.dispatchResponse(pool, responseTopic, message, packet);
+                },
+                (err: Error) => {
+                    this.failPending(pool, responseTopic, err);
+                }
+            );
+        } catch (err) {
+            // rollback registry on subscribe failure so a retry can re-subscribe
+            topicMap.delete(responseTopic);
+            throw err;
+        }
+        return reqMap;
+    }
+
+    private dispatchResponse(
+        pool: MQTTMessagePool,
+        responseTopic: string,
+        message: Buffer,
+        packet: mqtt.IPublishPacket
+    ): void {
+        const topicMap = this.pendingByPool.get(pool);
+        const reqMap = topicMap?.get(responseTopic);
+        if (!reqMap) return;
+
+        const corr = packet.properties?.correlationData;
+        let entry: PendingRequest | undefined;
+        let entryKey: string | undefined;
+
+        if (corr) {
+            entryKey = (corr as Buffer).toString("hex");
+            entry = reqMap.get(entryKey);
+            if (!entry) {
+                debug(
+                    `Dropping response on '${responseTopic}' with unmatched correlationData ${entryKey}; ` +
+                        `${reqMap.size} pending`
+                );
+                return;
+            }
+        } else {
+            // Backward compat: if exactly one request is pending, treat the response as its reply.
+            if (reqMap.size === 1) {
+                const it = reqMap.entries().next().value as [string, PendingRequest];
+                entryKey = it[0];
+                entry = it[1];
+            } else if (reqMap.size === 0) {
+                return;
+            } else {
+                warn(
+                    `Received response on '${responseTopic}' without correlationData but ${reqMap.size} pending; dropping`
+                );
+                return;
+            }
+        }
+
+        if (entry.timer) clearTimeout(entry.timer);
+        reqMap.delete(entryKey!);
+        const contentType = entry.contentType;
+        // Resolve before potentially unsubscribing so the consumer is unblocked first.
+        entry.resolve(new Content(contentType, Readable.from(message), packet));
+        this.maybeReleaseResponseTopic(pool, responseTopic);
+    }
+
+    private failPending(pool: MQTTMessagePool, responseTopic: string, err: Error): void {
+        const topicMap = this.pendingByPool.get(pool);
+        const reqMap = topicMap?.get(responseTopic);
+        if (!reqMap) return;
+        topicMap!.delete(responseTopic);
+        for (const entry of reqMap.values()) {
+            if (entry.timer) clearTimeout(entry.timer);
+            entry.reject(err);
+        }
+        reqMap.clear();
+    }
+
+    private maybeReleaseResponseTopic(pool: MQTTMessagePool, responseTopic: string): void {
+        const topicMap = this.pendingByPool.get(pool);
+        const reqMap = topicMap?.get(responseTopic);
+        if (!reqMap || reqMap.size > 0) return;
+        topicMap!.delete(responseTopic);
+        pool.unsubscribe(responseTopic).catch((e: Error) => {
+            warn(`Failed to unsubscribe response topic '${responseTopic}': ${e.message}`);
+        });
+    }
+
     private async publishAndWait(
         pool: MQTTMessagePool,
         topic: string,
@@ -86,45 +200,41 @@ export default class MqttClient implements ProtocolClient {
         contentType: string
     ): Promise<Content> {
         this.ensureV5Properties(options);
+        const correlationData = options.properties!.correlationData as Buffer;
+        const corrKey = correlationData.toString("hex");
 
-        let resolve: (value: Content | PromiseLike<Content>) => void;
-        let reject: (reason?: any) => void;
-        const responsePromise = new Promise<Content>((res, rej) => {
-            resolve = res;
-            reject = rej;
+        const reqMap = await this.ensureResponseListener(pool, responseTopic);
+
+        if (reqMap.has(corrKey)) {
+            // Astronomically unlikely with 128-bit random, but be defensive.
+            throw new Error(`correlationData collision on '${responseTopic}'`);
+        }
+
+        const promise = new Promise<Content>((resolve, reject) => {
+            const entry: PendingRequest = { contentType, resolve, reject };
+            entry.timer = setTimeout(() => {
+                if (reqMap.get(corrKey) === entry) {
+                    reqMap.delete(corrKey);
+                    this.maybeReleaseResponseTopic(pool, responseTopic);
+                }
+                reject(new Error(`Timeout waiting for response on topic ${responseTopic}`));
+            }, this.config.timeout ?? DEFAULT_TIMEOUT);
+            reqMap.set(corrKey, entry);
         });
-
-        let timer: NodeJS.Timeout;
-
-        const messageHandler = (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
-            if (timer) clearTimeout(timer);
-            resolve(new Content(contentType, Readable.from(message), packet));
-        };
-
-        await pool.subscribe(
-            responseTopic,
-            messageHandler,
-            (e: Error) => {
-                if (timer) clearTimeout(timer);
-                reject(e);
-            }
-        );
-
-        timer = setTimeout(() => {
-            pool.unsubscribe(responseTopic).catch(() => {});
-            reject(new Error(`Timeout waiting for response on topic ${responseTopic}`));
-        }, this.config.timeout ?? DEFAULT_TIMEOUT);
 
         try {
             await pool.publish(topic, buffer, options);
-            const result = await responsePromise;
-            await pool.unsubscribe(responseTopic);
-            return result;
         } catch (err) {
-            if (timer) clearTimeout(timer);
-            await pool.unsubscribe(responseTopic).catch(() => {});
+            const entry = reqMap.get(corrKey);
+            if (entry) {
+                if (entry.timer) clearTimeout(entry.timer);
+                reqMap.delete(corrKey);
+                this.maybeReleaseResponseTopic(pool, responseTopic);
+            }
             throw err;
         }
+
+        return promise;
     }
 
     public async subscribeResource(
@@ -139,11 +249,15 @@ export default class MqttClient implements ProtocolClient {
         // Keeping the path as the topic for compatibility reasons.
         // Current specification allows only form["mqv:filter"]. If href has no path (empty string),
         // `requestUri.pathname.slice(1)` returns '' which is not nullish — use explicit empty-check.
-        const _path = requestUri.pathname.slice(1) || '';
+        const _path = requestUri.pathname.slice(1) || "";
         const filter = _path.length ? _path : form["mqv:filter"];
 
         if (!filter) {
             throw new Error("No topic or filter provided");
+        }
+        if (Array.isArray(filter)) {
+            // pool.subscribe accepts arrays, but a single rxjs Subscription cannot map cleanly to a list of filters.
+            throw new Error("subscribeResource does not support filter arrays");
         }
 
         let pool = this.pools.get(brokerUri);
@@ -155,9 +269,10 @@ export default class MqttClient implements ProtocolClient {
 
         await pool.connect(brokerUri, this.config);
 
+        const poolRef = pool;
         await pool.subscribe(
             filter,
-            (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
+            (_topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
                 next(new Content(contentType, Readable.from(message), packet));
 
                 if (
@@ -165,20 +280,29 @@ export default class MqttClient implements ProtocolClient {
                     packet.properties &&
                     packet.properties.responseTopic
                 ) {
-                    const correlationData = packet.properties?.correlationData ?? generateCorrelationData();
                     const options: mqtt.IClientPublishOptions = {
                         properties: {
-                            correlationData,
                             userProperties: {
                                 timestamp: new Date().toISOString(),
                             },
                         },
                     };
-                    pool.publish(
-                        packet.properties.responseTopic,
-                        Buffer.from(JSON.stringify({ statusCode: 0, statusDesc: "OK" })),
-                        options
-                    );
+                    // Echo correlationData only if the requester sent one; per MQTT5 spec the
+                    // response correlationData must equal the request's (or be absent).
+                    if (packet.properties.correlationData) {
+                        options.properties!.correlationData = packet.properties.correlationData;
+                    }
+                    poolRef
+                        .publish(
+                            packet.properties.responseTopic,
+                            Buffer.from(JSON.stringify({ statusCode: 0, statusDesc: "OK" })),
+                            options
+                        )
+                        .catch((err: Error) => {
+                            warn(
+                                `Failed to publish auto-ack on '${packet.properties!.responseTopic}': ${err.message}`
+                            );
+                        });
                 }
             },
             (e: Error) => {
@@ -186,7 +310,18 @@ export default class MqttClient implements ProtocolClient {
             }
         );
 
-        return new Subscription(() => {});
+        return new Subscription(() => {
+            poolRef.unsubscribe(filter as string).catch((e: Error) => {
+                warn(`Failed to unsubscribe '${filter}': ${e.message}`);
+            });
+            if (complete) {
+                try {
+                    complete();
+                } catch (e) {
+                    warn(`subscribeResource complete callback threw: ${(e as Error).message}`);
+                }
+            }
+        });
     }
 
     public async readResource(form: MqttForm): Promise<Content> {
@@ -196,7 +331,7 @@ export default class MqttClient implements ProtocolClient {
         // Keeping the path as the topic for compatibility reasons.
         // Current specification allows only form["mqv:filter"]. If href has no path (empty string),
         // `requestUri.pathname.slice(1)` returns '' which is not nullish — use explicit empty-check.
-        const _path = requestUri.pathname.slice(1) || '';
+        const _path = requestUri.pathname.slice(1) || "";
 
         let pool = this.pools.get(brokerUri);
 
@@ -250,14 +385,16 @@ export default class MqttClient implements ProtocolClient {
         }
 
         let timer: NodeJS.Timeout;
+        const poolRef = pool;
         const result = await new Promise<Content>((resolve, reject) => {
             timer = setTimeout(() => {
+                poolRef.unsubscribe(filter).catch(() => {});
                 reject(new Error(`Timeout waiting for message on topic ${filter}`));
             }, this.config.timeout ?? DEFAULT_TIMEOUT);
 
-            pool!.subscribe(
+            poolRef.subscribe(
                 filter,
-                (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
+                (_topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
                     clearTimeout(timer);
                     resolve(new Content(contentType, Readable.from(message), packet));
                 },
@@ -265,10 +402,13 @@ export default class MqttClient implements ProtocolClient {
                     clearTimeout(timer);
                     reject(e);
                 }
-            );
+            ).catch((e: Error) => {
+                clearTimeout(timer);
+                reject(e);
+            });
         });
 
-        await pool.unsubscribe(filter);
+        await pool.unsubscribe(filter).catch(() => {});
         return result;
     }
 
@@ -303,10 +443,15 @@ export default class MqttClient implements ProtocolClient {
             qos: mapQoS(form["mqv:qos"]),
         };
 
+        // For v5: form-level mqv:properties wins; otherwise default to a request/response
+        // pattern with `${topic}/response`. Callers that want fire-and-forget can set
+        // mqv:properties without a responseTopic to opt out.
         if (this.config.protocolVersion === 5) {
-            options.properties = {
-                responseTopic: `${topic}/response`,
-            };
+            if (form["mqv:properties"]) {
+                options.properties = { ...form["mqv:properties"] };
+            } else {
+                options.properties = { responseTopic: `${topic}/response` };
+            }
         }
 
         if (content && content?.meta?.properties) {
@@ -340,8 +485,8 @@ export default class MqttClient implements ProtocolClient {
         const brokerUri = `${this.scheme}://${requestUri.host}`;
         // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
         // Fall back to form["mqv:topic"] in that case.
-        const _path = requestUri.pathname.slice(1) || '';
-        const topic = _path.length ? _path : form["mqv:topic"]??form["mqv:filter"];
+        const _path = requestUri.pathname.slice(1) || "";
+        const topic = _path.length ? _path : form["mqv:topic"] ?? form["mqv:filter"];
 
         if (!topic) {
             throw new Error("No topic provided");
@@ -366,10 +511,13 @@ export default class MqttClient implements ProtocolClient {
             qos: mapQoS(form["mqv:qos"]),
         };
 
+        // Same rationale as writeResource: form mqv:properties wins, else default to ${topic}/response.
         if (this.config.protocolVersion === 5) {
-             options.properties = {
-                responseTopic: `${topic}/response`,
-            };
+            if (form["mqv:properties"]) {
+                options.properties = { ...form["mqv:properties"] };
+            } else {
+                options.properties = { responseTopic: `${topic}/response` };
+            }
         }
 
         if (content && content.meta && content.meta.properties) {
@@ -405,7 +553,7 @@ export default class MqttClient implements ProtocolClient {
         const brokerUri: string = `${this.scheme}://` + requestUri.host;
         // `requestUri.pathname.slice(1)` may return an empty string when href contains only a host.
         // Fall back to form["mqv:filter"] in that case.
-        const _path = requestUri.pathname.slice(1) || '';
+        const _path = requestUri.pathname.slice(1) || "";
         const topic = _path.length ? _path : (form as MqttForm)["mqv:filter"];
 
         if (!topic) {
@@ -431,6 +579,17 @@ export default class MqttClient implements ProtocolClient {
     }
 
     public async stop(): Promise<void> {
+        // Reject any in-flight requests before tearing down pools.
+        for (const [pool, topicMap] of this.pendingByPool) {
+            for (const reqMap of topicMap.values()) {
+                for (const entry of reqMap.values()) {
+                    if (entry.timer) clearTimeout(entry.timer);
+                    entry.reject(new Error("MqttClient stopping"));
+                }
+            }
+            topicMap.clear();
+            this.pendingByPool.delete(pool);
+        }
         for (const pool of this.pools.values()) {
             await pool.end();
         }

@@ -288,6 +288,7 @@ export default class MqttBrokerServer implements ProtocolServer {
                         }'`
                     );
                 }
+                this.sendV5Response(packet, undefined);
             })
             .catch((err: Error) => {
                 error(
@@ -295,6 +296,7 @@ export default class MqttBrokerServer implements ProtocolServer {
                         segments[this.INTERACTION_NAME_SEGMENT_INDEX]
                     }': ${err.message}`
                 );
+                this.sendV5Response(packet, err);
             });
     }
 
@@ -321,15 +323,26 @@ export default class MqttBrokerServer implements ProtocolServer {
             const formContentType = property.forms[options.formIndex].contentType ?? ContentSerdes.DEFAULT;
             const inputContent = new Content(formContentType, Readable.from(payload));
 
-            try {
-                thing.handleWriteProperty(segments[this.INTERACTION_NAME_SEGMENT_INDEX], inputContent, options);
-            } catch (err) {
-                error(
-                    `MqttBrokerServer at ${this.brokerURI} got error on writing to property '${
-                        segments[this.INTERACTION_NAME_SEGMENT_INDEX]
-                    }': ${err}`
-                );
-            }
+            // handleWriteProperty returns a Promise; await so we can ack/nack on the v5 responseTopic.
+            Promise.resolve()
+                .then(() =>
+                    thing.handleWriteProperty(
+                        segments[this.INTERACTION_NAME_SEGMENT_INDEX],
+                        inputContent,
+                        options
+                    )
+                )
+                .then(() => {
+                    this.sendV5Response(packet, undefined);
+                })
+                .catch((err: Error) => {
+                    error(
+                        `MqttBrokerServer at ${this.brokerURI} got error on writing to property '${
+                            segments[this.INTERACTION_NAME_SEGMENT_INDEX]
+                        }': ${err}`
+                    );
+                    this.sendV5Response(packet, err);
+                });
         } else {
             warn(
                 `MqttBrokerServer at ${this.brokerURI} received message for readOnly property at '${segments.join(
@@ -337,6 +350,39 @@ export default class MqttBrokerServer implements ProtocolServer {
                 )}'`
             );
         } // property is writeable? Not necessary since it didn't actually subscribe to this topic
+    }
+
+    /**
+     * Reply to a v5 request that carried `responseTopic`. The responseTopic and correlationData
+     * (if present) are echoed verbatim per the MQTT 5 spec; absence of responseTopic makes this
+     * a no-op so v3/v4 traffic and pure fire-and-forget v5 traffic are unaffected.
+     */
+    private sendV5Response(reqPacket: IPublishPacket, err: Error | undefined): void {
+        const responseTopic = reqPacket?.properties?.responseTopic;
+        if (!responseTopic || !this.broker) return;
+
+        const properties: { correlationData?: Buffer; userProperties?: Record<string, string> } = {};
+        if (reqPacket.properties?.correlationData) {
+            properties.correlationData = reqPacket.properties.correlationData;
+        }
+        let payload: Buffer;
+        if (err) {
+            properties.userProperties = { error: err.message ?? String(err) };
+            payload = Buffer.from(
+                JSON.stringify({ statusCode: 1, statusDesc: err.message ?? String(err) })
+            );
+        } else {
+            payload = Buffer.from(JSON.stringify({ statusCode: 0, statusDesc: "OK" }));
+        }
+        try {
+            this.broker.publish(responseTopic, payload, { properties });
+        } catch (publishErr) {
+            warn(
+                `MqttBrokerServer at ${this.brokerURI} failed to publish v5 response to '${responseTopic}': ${
+                    (publishErr as Error).message
+                }`
+            );
+        }
     }
 
     public async destroy(thingId: string): Promise<boolean> {

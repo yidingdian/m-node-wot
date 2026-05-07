@@ -54,8 +54,8 @@ export interface MqttClientConfig {
     rejectUnauthorized?: boolean;
     protocolVersion?: 3 | 4 | 5;
     /**
-     * Timeout in milliseconds for operations that wait for a response (readResource, writeResource/invokeResource with responseTopic).
-     * Default is 10000ms (10s).
+     * Timeout in milliseconds for operations that wait for a response (readResource, writeResource/invokeResource
+     * with an explicit responseTopic). Default is 5000ms (5s); see DEFAULT_TIMEOUT in mqtt-client.ts.
      */
     timeout?: number;
 }
