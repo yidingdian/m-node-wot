@@ -1,6 +1,6 @@
 {
   "name": "@yidingdian/binding-queue",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "node-wot Binding for message queues (FairQueue) - Queue-based protocol binding for WoT with per-device fair scheduling",
   "author": "yidingdian <iadom@163.com>",
   "license": "EPL-2.0 OR W3C-20150513",

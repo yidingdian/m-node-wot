@@ -252,15 +252,21 @@ export class QueueProtocolClient implements ProtocolClient {
             timestamp: Date.now(),
         };
 
+        const d = this.config.defaultJobOpts ?? {};
         const jobOpts: Record<string, unknown> = {
             jobId: `${thingId}/${name}/read`,
-            attempts: queueForm["queue:retries"] ?? 5,
-            backoff: 1000,
-            priority: 2,
+            attempts: queueForm["queue:retries"] ?? d.attempts ?? 1,
+            backoff: d.backoff ?? 1000,
+            priority: d.priority ?? 2,
         };
 
-        if (queueForm["queue:timeout"]) {
-            jobOpts.waitTTL = queueForm["queue:timeout"];
+        const ttlOverride = queueForm["queue:timeout"] ?? d.waitTTL;
+        if (ttlOverride !== undefined) {
+            jobOpts.waitTTL = ttlOverride;
+        }
+        const queueTTLOverride = queueForm["queue:queueTTL"] ?? d.queueTTLMs;
+        if (queueTTLOverride !== undefined) {
+            jobOpts.queueTTLMs = queueTTLOverride;
         }
 
         debug(`readResource: ${thingId}/${name} via sendQ.waitJobDone`);
@@ -303,20 +309,29 @@ export class QueueProtocolClient implements ProtocolClient {
             timestamp: Date.now(),
         };
 
+        const d = this.config.defaultJobOpts ?? {};
         const jobOpts: Record<string, unknown> = {
             jobId: `${thingId}/${name}/write`,
             removeOnComplete: true,
             removeOnFail: true,
-            attempts: queueForm["queue:retries"] ?? 5,
-            backoff: 1000,
+            // 默认 attempts=1：见 readResource 注释。
+            attempts: queueForm["queue:retries"] ?? d.attempts ?? 1,
+            backoff: d.backoff ?? 1000,
         };
 
         if (queueForm["queue:priority"]) {
             jobOpts.priority = queueForm["queue:priority"];
+        } else if (d.priority !== undefined) {
+            jobOpts.priority = d.priority;
         }
 
         if (queueForm["queue:delay"]) {
             jobOpts.delay = queueForm["queue:delay"];
+        }
+
+        const writeQueueTTLOverride = queueForm["queue:queueTTL"] ?? d.queueTTLMs;
+        if (writeQueueTTLOverride !== undefined) {
+            jobOpts.queueTTLMs = writeQueueTTLOverride;
         }
 
         debug(`writeResource: ${thingId}/${name} via sendQ.queueJob`);
@@ -360,10 +375,19 @@ export class QueueProtocolClient implements ProtocolClient {
             timestamp: Date.now(),
         };
 
+        const d = this.config.defaultJobOpts ?? {};
         const jobOpts: Record<string, unknown> = {};
+        if (d.attempts !== undefined) jobOpts.attempts = d.attempts;
+        if (d.backoff !== undefined) jobOpts.backoff = d.backoff;
+        if (d.priority !== undefined) jobOpts.priority = d.priority;
 
-        if (queueForm["queue:timeout"]) {
-            jobOpts.waitTTL = queueForm["queue:timeout"];
+        const ttlOverride = queueForm["queue:timeout"] ?? d.waitTTL;
+        if (ttlOverride !== undefined) {
+            jobOpts.waitTTL = ttlOverride;
+        }
+        const invokeQueueTTLOverride = queueForm["queue:queueTTL"] ?? d.queueTTLMs;
+        if (invokeQueueTTLOverride !== undefined) {
+            jobOpts.queueTTLMs = invokeQueueTTLOverride;
         }
 
         debug(`invokeResource: ${thingId}/${name} via sendQ.waitJobDone`);

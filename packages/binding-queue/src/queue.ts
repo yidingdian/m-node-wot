@@ -122,6 +122,18 @@ export interface QueueConfig {
      * If not provided, uses debug('binding-queue').
      */
     logger?: QueueLogger;
+    /** Per-call jobOpts default. Precedence: form fields > defaultJobOpts > built-in. */
+    defaultJobOpts?: {
+        attempts?: number;
+        backoff?: number;
+        waitTTL?: number;
+        /**
+         * Drop a job at dequeue if `now - job.timestamp > queueTTLMs`.
+         * Defends against stale-backlog replay after broker/consumer downtime.
+         */
+        queueTTLMs?: number;
+        priority?: number;
+    };
 }
 
 /**
@@ -152,6 +164,11 @@ export interface QueueForm extends Form {
     "queue:delay"?: number;
     /** Job timeout in milliseconds for waitJobDone (overrides global waitTTLMs) */
     "queue:timeout"?: number;
+    /**
+     * Per-form override for queueTTLMs: drop at dequeue if job is too old.
+     * Precedence: form annotation > defaultJobOpts.queueTTLMs.
+     */
+    "queue:queueTTL"?: number;
 }
 
 // ─── Request / Response Types ───────────────────────────────────────────────
