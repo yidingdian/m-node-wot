@@ -151,7 +151,10 @@ class MockFairQueue implements FairQueueInstance {
     }
 }
 
-// Mock TD for testing
+// Mock TD for testing.
+// href 走 4 段格式 queue://{title}/{encodeURIComponent(thingId)}/{type}/{name}
+// 与 parseQueueUri / buildQueueUri 保持一致(见 src/queue.ts:268)。
+const MOCK_THING_ID_ENCODED = encodeURIComponent("urn:dev:wot:test-device-123");
 const mockTd: WoT.ThingDescription = {
     "@context": "https://www.w3.org/2022/wot/td/v1.1",
     id: "urn:dev:wot:test-device-123",
@@ -167,7 +170,7 @@ const mockTd: WoT.ThingDescription = {
             forms: [
                 {
                     op: ["readproperty", "writeproperty"],
-                    href: "queue://test-device-123/properties/brightness",
+                    href: `queue://test-device-123/${MOCK_THING_ID_ENCODED}/properties/brightness`,
                     contentType: "application/json",
                 },
             ],
@@ -180,7 +183,7 @@ const mockTd: WoT.ThingDescription = {
             forms: [
                 {
                     op: ["invokeaction"],
-                    href: "queue://test-device-123/actions/toggle",
+                    href: `queue://test-device-123/${MOCK_THING_ID_ENCODED}/actions/toggle`,
                     contentType: "application/json",
                 },
             ],
@@ -192,7 +195,7 @@ const mockTd: WoT.ThingDescription = {
             forms: [
                 {
                     op: ["subscribeevent"],
-                    href: "queue://test-device-123/events/statusChanged",
+                    href: `queue://test-device-123/${MOCK_THING_ID_ENCODED}/events/statusChanged`,
                     contentType: "application/json",
                     subprotocol: "queue-events",
                 },
@@ -217,7 +220,13 @@ describe("QueueBinding with MockFairQueue", () => {
         });
 
         afterEach(async () => {
-            await servient.shutdown();
+            // 测试体内可能已经调用过 shutdown(例如下面的 start/stop 测试),
+            // Servient 重复 shutdown 会抛 "wasn't even started",忽略掉。
+            try {
+                await servient.shutdown();
+            } catch {
+                /* already shut down */
+            }
         });
 
         it("should start and stop without errors", async () => {
@@ -462,6 +471,7 @@ describe("QueueBinding with MockFairQueue", () => {
             // Start server
             const serverWot = await serverServient.start();
             const exposedThing = await serverWot.produce({
+                id: "urn:dev:wot:test-device-123",
                 title: "test-device-123",
                 actions: {
                     toggle: {
@@ -485,7 +495,8 @@ describe("QueueBinding with MockFairQueue", () => {
             expect(consumedThing).to.be.an("object");
 
             const result = await consumedThing.invokeAction("toggle", { state: true });
-            const resultValue = await result.value();
+            expect(result).to.exist;
+            const resultValue = await result!.value();
 
             expect(resultValue).to.deep.include({ success: true, toggled: true });
         });
@@ -495,6 +506,7 @@ describe("QueueBinding with MockFairQueue", () => {
 
             const serverWot = await serverServient.start();
             const exposedThing = await serverWot.produce({
+                id: "urn:dev:wot:test-device-123",
                 title: "test-device-123",
                 properties: {
                     brightness: { type: "integer", observable: true },
@@ -511,6 +523,69 @@ describe("QueueBinding with MockFairQueue", () => {
             const value = await result.value();
 
             expect(value).to.equal(75);
+        });
+
+        // writeResource 现在走 sendQ.waitJobDone,server 端 write handler 抛错应能透传到 client。
+        // 这条测试既覆盖正常路径(server return void/null),也覆盖错误路径(message-as-errorCode)。
+        it("should write property through queue binding end-to-end", async function () {
+            this.timeout(5000);
+
+            const serverWot = await serverServient.start();
+            const exposedThing = await serverWot.produce({
+                id: "urn:dev:wot:test-device-123",
+                title: "test-device-123",
+                properties: {
+                    brightness: { type: "integer", observable: true },
+                },
+            });
+
+            let writtenValue: unknown = null;
+            exposedThing.setPropertyWriteHandler("brightness", async (value) => {
+                writtenValue = await value.value();
+                return;
+            });
+
+            await exposedThing.expose();
+
+            const clientWot = await clientServient.start();
+            const consumedThing = await clientWot.consume(mockTd);
+
+            await consumedThing.writeProperty("brightness", 60);
+
+            expect(writtenValue).to.equal(60);
+        });
+
+        it("should propagate server-side write errors to client", async function () {
+            this.timeout(5000);
+
+            const serverWot = await serverServient.start();
+            const exposedThing = await serverWot.produce({
+                id: "urn:dev:wot:test-device-123",
+                title: "test-device-123",
+                properties: {
+                    brightness: { type: "integer", observable: true },
+                },
+            });
+
+            exposedThing.setPropertyWriteHandler("brightness", async () => {
+                throw new Error("DEVICE_OFFLINE");
+            });
+
+            await exposedThing.expose();
+
+            const clientWot = await clientServient.start();
+            const consumedThing = await clientWot.consume(mockTd);
+
+            let caught: Error | null = null;
+            try {
+                await consumedThing.writeProperty("brightness", 60);
+            } catch (e) {
+                caught = e as Error;
+            }
+
+            expect(caught).to.not.be.null;
+            // Error.message 跨 FairQueue resultKey 序列化保留,客户端按 message 当 errorCode 区分。
+            expect(caught!.message).to.include("DEVICE_OFFLINE");
         });
     });
 });

@@ -24,7 +24,7 @@
  *
  * Key method mapping:
  *   - readResource()    → sendQ.waitJobDone(sn, "readProperty", ...)
- *   - writeResource()   → sendQ.queueJob(sn, "writeProperty", ...)
+ *   - writeResource()   → sendQ.waitJobDone(sn, "writeProperty", ...)
  *   - invokeResource()  → sendQ.waitJobDone(sn, "action", ...) or sendQ.overrideJob(...)
  *   - subscribeResource() → registers a local callback, dispatched by recvQ processor
  */
@@ -275,7 +275,7 @@ export class QueueProtocolClient implements ProtocolClient {
     }
 
     /**
-     * Write a property value via sendQ.queueJob (buffered, dedup by jobId).
+     * Write a property value via sendQ.waitJobDone (synchronous, propagates server errors).
      */
     public async writeResource(form: Form, content: Content): Promise<void | Content> {
         this.ensureRunning();
@@ -311,7 +311,6 @@ export class QueueProtocolClient implements ProtocolClient {
 
         const d = this.config.defaultJobOpts ?? {};
         const jobOpts: Record<string, unknown> = {
-            jobId: `${thingId}/${name}/write`,
             removeOnComplete: true,
             removeOnFail: true,
             // 默认 attempts=1：见 readResource 注释。
@@ -329,13 +328,17 @@ export class QueueProtocolClient implements ProtocolClient {
             jobOpts.delay = queueForm["queue:delay"];
         }
 
+        const ttlOverride = queueForm["queue:timeout"] ?? d.waitTTL;
+        if (ttlOverride !== undefined) {
+            jobOpts.waitTTL = ttlOverride;
+        }
         const writeQueueTTLOverride = queueForm["queue:queueTTL"] ?? d.queueTTLMs;
         if (writeQueueTTLOverride !== undefined) {
             jobOpts.queueTTLMs = writeQueueTTLOverride;
         }
 
-        debug(`writeResource: ${thingId}/${name} via sendQ.queueJob`);
-        await this.sendQ!.queueJob(sn, "writeProperty", jobData, jobOpts);
+        debug(`writeResource: ${thingId}/${name} via sendQ.waitJobDone`);
+        await this.sendQ!.waitJobDone(sn, "writeProperty", jobData, jobOpts);
         return;
     }
 
