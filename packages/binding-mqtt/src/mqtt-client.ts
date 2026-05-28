@@ -221,6 +221,9 @@ export default class MqttClient implements ProtocolClient {
             }, this.config.timeout ?? DEFAULT_TIMEOUT);
             reqMap.set(corrKey, entry);
         });
+        // Prevent "unhandledRejection" if the timeout fires while we are still
+        // awaiting pool.publish (waiting for PUBACK from broker).
+        promise.catch(() => {});
 
         try {
             await pool.publish(topic, buffer, options);
