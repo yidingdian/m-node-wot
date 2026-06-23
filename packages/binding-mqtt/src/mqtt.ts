@@ -58,6 +58,14 @@ export interface MqttClientConfig {
      * with an explicit responseTopic). Default is 5000ms (5s); see DEFAULT_TIMEOUT in mqtt-client.ts.
      */
     timeout?: number;
+    /**
+     * Number of persistent broker connections to fan device traffic across,
+     * hashed by the SN segment of the topic so a given device's request +
+     * response always stay on the same connection. Default 1 (single shared
+     * connection — original behaviour). When unset, falls back to the
+     * MQTT_CONN_SHARDS environment variable.
+     */
+    connectionShards?: number;
 }
 
 export interface MqttBrokerServerConfig {

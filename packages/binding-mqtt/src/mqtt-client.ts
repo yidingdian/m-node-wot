@@ -34,7 +34,7 @@ import { Readable } from "stream";
 import MQTTMessagePool from "./mqtt-message-pool";
 import { mapQoS } from "./util";
 
-const { debug, warn } = createLoggers("binding-mqtt", "mqtt-client");
+const { debug, info, warn } = createLoggers("binding-mqtt", "mqtt-client");
 
 const DEFAULT_TIMEOUT = 5000;
 
@@ -65,6 +65,8 @@ export default class MqttClient implements ProtocolClient {
         secure = false
     ) {
         this.scheme = "mqtt" + (secure ? "s" : "");
+        // Resolve shard count: config wins, then env, then default 1 (off).
+        this.shards = Math.max(1, Number(config.connectionShards ?? process.env.MQTT_CONN_SHARDS) || 1);
     }
 
     private client?: mqtt.MqttClient;
@@ -84,6 +86,50 @@ export default class MqttClient implements ProtocolClient {
                 options.properties.userProperties.timestamp = new Date().toISOString();
             }
         }
+    }
+
+    // ── Connection sharding ────────────────────────────────────────────────
+    // Default 1 = behave exactly as before (one pool/connection per broker URI).
+    // With shards>1 the per-device request/response load is spread across N
+    // persistent connections, hashed by the device SN segment of the topic so a
+    // given device's request + response always land on the same pool. The shard
+    // count is resolved in the constructor (config.connectionShards, then the
+    // MQTT_CONN_SHARDS env var, then 1). The diagnostic logging below is
+    // intentionally lightweight: it only fires while sharding is enabled and is
+    // bounded by the shard count.
+    private readonly shards: number;
+    private shardActiveLogged = false;
+
+    // topic form: raft/<product>/<SN>/... — hash the SN segment into [0, shards).
+    private shardKey(brokerUri: string, topic?: string | string[]): string {
+        if (this.shards <= 1) return brokerUri;
+        const t = Array.isArray(topic) ? topic[0] : topic;
+        if (!t) return `${brokerUri}#0`;
+        const seg = t.split("/");
+        const sn = seg.length > 2 ? seg[2] : t;
+        let h = 0;
+        for (let i = 0; i < sn.length; i++) h = Math.imul(h, 31) + sn.charCodeAt(i);
+        return `${brokerUri}#${Math.abs(h | 0) % this.shards}`;
+    }
+
+    private async getPool(brokerUri: string, topic?: string | string[]): Promise<MQTTMessagePool> {
+        const key = this.shardKey(brokerUri, topic);
+        let pool = this.pools.get(key);
+        if (pool == null) {
+            if (this.shards > 1 && !this.shardActiveLogged) {
+                this.shardActiveLogged = true;
+                info(`[mqtt-shard] enabled: shards=${this.shards}, routing by hash(SN)`);
+            }
+            pool = new MQTTMessagePool();
+            this.pools.set(key, pool);
+            await pool.connect(brokerUri, this.config);
+            if (this.shards > 1) {
+                info(`[mqtt-shard] pool connected: ${key} (${this.pools.size}/${this.shards} up)`);
+            }
+            return pool;
+        }
+        await pool.connect(brokerUri, this.config);
+        return pool;
     }
 
     private pendingForPool(pool: MQTTMessagePool): Map<string, Map<string, PendingRequest>> {
@@ -263,14 +309,7 @@ export default class MqttClient implements ProtocolClient {
             throw new Error("subscribeResource does not support filter arrays");
         }
 
-        let pool = this.pools.get(brokerUri);
-
-        if (pool == null) {
-            pool = new MQTTMessagePool();
-            this.pools.set(brokerUri, pool);
-        }
-
-        await pool.connect(brokerUri, this.config);
+        const pool = await this.getPool(brokerUri, filter);
 
         const poolRef = pool;
         await pool.subscribe(
@@ -336,16 +375,9 @@ export default class MqttClient implements ProtocolClient {
         // `requestUri.pathname.slice(1)` returns '' which is not nullish — use explicit empty-check.
         const _path = requestUri.pathname.slice(1) || "";
 
-        let pool = this.pools.get(brokerUri);
-
-        if (pool == null) {
-            pool = new MQTTMessagePool();
-            this.pools.set(brokerUri, pool);
-        }
-
-        await pool.connect(brokerUri, this.config);
-
         const filter = _path.length ? _path : form["mqv:filter"];
+
+        const pool = await this.getPool(brokerUri, filter);
 
         const explicitResponseTopic = form["mqv:properties"] && form["mqv:properties"].responseTopic;
         // Default to adding '/response' if properties are missing and it's not a retained read
@@ -430,14 +462,7 @@ export default class MqttClient implements ProtocolClient {
             throw new Error("Topic cannot be an array");
         }
 
-        let pool = this.pools.get(brokerUri);
-
-        if (pool == null) {
-            pool = new MQTTMessagePool();
-            this.pools.set(brokerUri, pool);
-        }
-
-        await pool.connect(brokerUri, this.config);
+        const pool = await this.getPool(brokerUri, topic);
 
         // if not input was provided, set up an own body otherwise take input as body
         const buffer = content === undefined ? Buffer.from("") : await content.toBuffer();
@@ -498,14 +523,7 @@ export default class MqttClient implements ProtocolClient {
             throw new Error("Topic cannot be an array");
         }
 
-        let pool = this.pools.get(brokerUri);
-
-        if (pool == null) {
-            pool = new MQTTMessagePool();
-            this.pools.set(brokerUri, pool);
-        }
-
-        await pool.connect(brokerUri, this.config);
+        const pool = await this.getPool(brokerUri, topic);
 
         // if not input was provided, set up an own body otherwise take input as body
         const buffer = content === undefined ? Buffer.from("") : await content.toBuffer();
@@ -563,7 +581,7 @@ export default class MqttClient implements ProtocolClient {
             throw new Error("No topic or filter provided");
         }
 
-        const pool = this.pools.get(brokerUri);
+        const pool = this.pools.get(this.shardKey(brokerUri, topic));
         if (pool != null) {
             await pool.unsubscribe(topic);
             debug(`MqttClient unsubscribed from topic '${topic}'`);
