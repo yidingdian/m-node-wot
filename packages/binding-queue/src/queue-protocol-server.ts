@@ -477,6 +477,8 @@ export class QueueProtocolServer implements ProtocolServer {
      * @param td        Full Thing Description (pass empty object for deletions)
      * @param operation "thing_created" | "thing_updated" | "thing_deleted"
      * @param shadowDevice  Optional device metadata for startup status sync
+     * @param priority  Optional per-device queue priority (forwarded to recvQ).
+     *                  The caller owns the value; omit to use the queue default.
      */
     public async notifyTdUpdate(
         thingId: string,
@@ -484,7 +486,8 @@ export class QueueProtocolServer implements ProtocolServer {
         title: string,
         td: Record<string, unknown>,
         operation: string,
-        shadowDevice?: Record<string, unknown>
+        shadowDevice?: Record<string, unknown>,
+        priority?: number
     ): Promise<void> {
         if (!this.isRunning || !this.recvQ) {
             warn(`notifyTdUpdate called but recvQ is not ready (isRunning=${this.isRunning})`);
@@ -501,9 +504,9 @@ export class QueueProtocolServer implements ProtocolServer {
             timestamp: Date.now(),
         };
 
-        await this.recvQ.add("td", payload as unknown as Record<string, unknown>, {
-            removeOnComplete: true,
-        });
+        const addOpts: Record<string, unknown> = { removeOnComplete: true };
+        if (priority != null) addOpts.priority = priority;
+        await this.recvQ.add("td", payload as unknown as Record<string, unknown>, addOpts);
 
         debug(`notifyTdUpdate: pushed '${operation}' for ${thingId} (sn=${sn})`);
     }
