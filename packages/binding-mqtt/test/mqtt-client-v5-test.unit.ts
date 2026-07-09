@@ -478,9 +478,13 @@ describe("MQTT client v5 support", () => {
                 correlationData: Buffer.from("read-123"),
             },
         };
+        const requestContent = new Content(
+            "application/json",
+            Readable.from(Buffer.from(JSON.stringify(["aProperty", "bProperty"])))
+        );
 
         // Start readResource in background
-        const readPromise = client.readResource(form);
+        const readPromise = client.readResource(form, requestContent);
 
         // Wait for subscribe packet for responseTopic
         const subscribePacket = (await waitForPacket("subscribe")) as mqttPacket.ISubscribePacket;
@@ -491,7 +495,7 @@ describe("MQTT client v5 support", () => {
         const publishPacket = (await waitForPacket("publish")) as mqttPacket.IPublishPacket;
         expect(publishPacket).to.exist;
         expect(publishPacket.topic).to.equal(topic);
-        expect(publishPacket.payload.length).to.equal(0); // Empty payload for read
+        expect(publishPacket.payload.toString()).to.equal(JSON.stringify(["aProperty", "bProperty"]));
 
         // Send response from broker
         const responsePayload = "read-response-data";

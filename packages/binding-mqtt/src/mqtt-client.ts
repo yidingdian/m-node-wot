@@ -366,7 +366,7 @@ export default class MqttClient implements ProtocolClient {
         });
     }
 
-    public async readResource(form: MqttForm): Promise<Content> {
+    public async readResource(form: MqttForm, content?: Content): Promise<Content> {
         const contentType = form.contentType ?? ContentSerdes.DEFAULT;
         const requestUri = new url.URL(form.href);
         const brokerUri: string = `${this.scheme}://` + requestUri.host;
@@ -405,10 +405,12 @@ export default class MqttClient implements ProtocolClient {
                 },
             };
 
+            const payload = content === undefined ? Buffer.from("") : await content.toBuffer();
+
             return await this.publishAndWait(
                 pool,
                 topic,
-                Buffer.from(""),
+                payload,
                 options,
                 responseTopic,
                 contentType
