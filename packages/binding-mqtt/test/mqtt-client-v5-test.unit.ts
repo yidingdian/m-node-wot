@@ -564,4 +564,74 @@ describe("MQTT client v5 support", () => {
         const buffer = await result.toBuffer();
         expect(buffer.toString()).to.equal("response-data");
     });
+    // The ack goes out before the message handler runs, because the publisher retransmits the
+    // whole event once its ack timer expires. It is QoS 0 so it cannot add packets to the
+    // connection that is already the bottleneck.
+    const publishToSubscriber = (topic: string, responseTopic: string, correlationData: Buffer) =>
+        mqttPacket.generate(
+            {
+                cmd: "publish",
+                topic,
+                payload: Buffer.from("evt"),
+                qos: 0,
+                retain: false,
+                dup: false,
+                properties: { responseTopic, correlationData },
+            },
+            { protocolVersion: 5 }
+        );
+
+    const waitForAck = async (responseTopic: string): Promise<mqttPacket.IPublishPacket> => {
+        const start = Date.now();
+        while (Date.now() - start < 1000) {
+            const ack = receivedPackets.find(
+                (p) => p.cmd === "publish" && (p as mqttPacket.IPublishPacket).topic === responseTopic
+            );
+            if (ack) return ack as mqttPacket.IPublishPacket;
+            await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        throw new Error(`No auto-ack on ${responseTopic}`);
+    };
+
+    it("should auto-ack a subscribed message at QoS 0, echoing correlationData (MQTT v5)", async () => {
+        client = new MqttClient({ protocolVersion: 5, reconnectPeriod: 0 } as any);
+        const topic = "test/autoack";
+        const responseTopic = `${topic}/response`;
+        const correlationData = Buffer.from("corr-1");
+        const form: MqttForm = { href: `${brokerUri}/${topic}`, "mqv:controlPacket": "subscribe" };
+
+        await client.subscribeResource(form, () => {
+            /* content is irrelevant here */
+        });
+        await waitForPacket("subscribe");
+        clientSocket!.write(publishToSubscriber(topic, responseTopic, correlationData));
+
+        const ack = await waitForAck(responseTopic);
+        expect(ack.qos).to.equal(0);
+        expect(ack.properties!.correlationData!.toString()).to.equal("corr-1");
+        expect(JSON.parse(ack.payload.toString()).statusCode).to.equal(0);
+    });
+
+    it("should let an explicit autoAckQoS 0 override the env var (MQTT v5)", async () => {
+        const previous = process.env.MQTT_AUTO_ACK_QOS;
+        process.env.MQTT_AUTO_ACK_QOS = "1";
+        try {
+            client = new MqttClient({ protocolVersion: 5, reconnectPeriod: 0, autoAckQoS: 0 } as any);
+            const topic = "test/autoack-explicit";
+            const responseTopic = `${topic}/response`;
+            const form: MqttForm = { href: `${brokerUri}/${topic}`, "mqv:controlPacket": "subscribe" };
+
+            await client.subscribeResource(form, () => {
+                /* content is irrelevant here */
+            });
+            await waitForPacket("subscribe");
+            clientSocket!.write(publishToSubscriber(topic, responseTopic, Buffer.from("corr-2")));
+
+            const ack = await waitForAck(responseTopic);
+            expect(ack.qos).to.equal(0);
+        } finally {
+            if (previous === undefined) delete process.env.MQTT_AUTO_ACK_QOS;
+            else process.env.MQTT_AUTO_ACK_QOS = previous;
+        }
+    });
 });

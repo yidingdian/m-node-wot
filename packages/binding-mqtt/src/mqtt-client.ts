@@ -67,6 +67,10 @@ export default class MqttClient implements ProtocolClient {
         this.scheme = "mqtt" + (secure ? "s" : "");
         // Resolve shard count: config wins, then env, then default 1 (off).
         this.shards = Math.max(1, Number(config.connectionShards ?? process.env.MQTT_CONN_SHARDS) || 1);
+        // Auto-ack QoS: config wins, then env, then 0. Raise it only once the broker is
+        // shown to be dropping acks — QoS 1 doubles packet count on the same connection.
+        const ackQoS = Number(config.autoAckQoS ?? process.env.MQTT_AUTO_ACK_QOS);
+        this.autoAckQoS = ackQoS === 1 || ackQoS === 2 ? ackQoS : 0;
     }
 
     private client?: mqtt.MqttClient;
@@ -98,6 +102,8 @@ export default class MqttClient implements ProtocolClient {
     // intentionally lightweight: it only fires while sharding is enabled and is
     // bounded by the shard count.
     private readonly shards: number;
+
+    private readonly autoAckQoS: 0 | 1 | 2;
     private shardActiveLogged = false;
 
     // topic form: raft/<product>/<SN>/... — hash the SN segment into [0, shards).
@@ -315,14 +321,16 @@ export default class MqttClient implements ProtocolClient {
         await pool.subscribe(
             filter,
             (_topic: string, message: Buffer, packet: mqtt.IPublishPacket) => {
-                next(new Content(contentType, Readable.from(message), packet));
-
+                // The ack is a fixed OK that carries no result of the handling below, so it goes
+                // out first: the publisher retransmits the whole event once its ack timer expires,
+                // and waiting for the handler puts that timer behind every subscriber on this tick.
                 if (
                     this.config.protocolVersion === 5 &&
                     packet.properties &&
                     packet.properties.responseTopic
                 ) {
                     const options: mqtt.IClientPublishOptions = {
+                        qos: this.autoAckQoS,
                         properties: {
                             userProperties: {
                                 timestamp: new Date().toISOString(),
@@ -346,6 +354,8 @@ export default class MqttClient implements ProtocolClient {
                             );
                         });
                 }
+
+                next(new Content(contentType, Readable.from(message), packet));
             },
             (e: Error) => {
                 if (error) error(e);

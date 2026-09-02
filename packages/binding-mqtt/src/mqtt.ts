@@ -66,6 +66,13 @@ export interface MqttClientConfig {
      * MQTT_CONN_SHARDS environment variable.
      */
     connectionShards?: number;
+    /**
+     * QoS of the auto-ack published back on a received message's responseTopic.
+     * Default 0. Raise it only if the broker is measurably dropping acks: QoS 1
+     * doubles the packet count on a connection that is already the bottleneck.
+     * When unset, falls back to the MQTT_AUTO_ACK_QOS environment variable.
+     */
+    autoAckQoS?: 0 | 1 | 2;
 }
 
 export interface MqttBrokerServerConfig {
