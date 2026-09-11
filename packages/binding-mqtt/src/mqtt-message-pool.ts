@@ -13,7 +13,7 @@
  * SPDX-License-Identifier: EPL-2.0 OR W3C-20150513
  ********************************************************************************/
 import { createLoggers } from "@node-wot/core";
-import { MqttClientConfig } from "./mqtt";
+import { MqttClientConfig, MqttConnectionEvent } from "./mqtt";
 import * as mqtt from "mqtt";
 
 const { debug, warn } = createLoggers("binding-mqtt", "mqtt-message-pool");
@@ -22,7 +22,19 @@ export default class MQTTMessagePool {
     client?: mqtt.MqttClient;
     subscribers: Map<string, (topic: string, message: Buffer, packet: mqtt.IPublishPacket) => void> = new Map();
     errors: Map<string, (error: Error) => void> = new Map();
+    /** Connection identity used in emitted events; set by the owner when sharding. */
+    label = "";
     private connectionPromise?: Promise<void>;
+    private onConnectionEvent?: (event: MqttConnectionEvent) => void;
+
+    private emit(event: Omit<MqttConnectionEvent, "broker">): void {
+        if (!this.onConnectionEvent) return;
+        try {
+            this.onConnectionEvent({ ...event, broker: this.label });
+        } catch {
+            // a broken sink must not take the connection down with it
+        }
+    }
 
     public async connect(brokerURI: string, config: MqttClientConfig): Promise<void> {
         if (this.client) {
@@ -33,6 +45,8 @@ export default class MQTTMessagePool {
             await this.connectionPromise;
             return;
         }
+        this.onConnectionEvent = config.onConnectionEvent;
+        if (!this.label) this.label = brokerURI;
         this.connectionPromise = (async () => {
             this.client = await mqtt.connectAsync(brokerURI, config);
             this.client.on("message", (receivedTopic: string, payload: Buffer, packet: mqtt.IPublishPacket) => {
@@ -47,6 +61,7 @@ export default class MQTTMessagePool {
             // therefore we broadcast the error to all subscribers
             this.client.on("error", (error: Error) => {
                 warn(`MQTT client error: ${error.message}`);
+                this.emit({ type: "error", error: error.message, filters: this.subscribers.size });
                 this.errors.forEach((errorCallback) => {
                     errorCallback(error);
                 });
@@ -54,15 +69,35 @@ export default class MQTTMessagePool {
             // After a reconnect with no persistent session the broker has dropped our subscriptions.
             // Re-issue them so consumers don't go silent. The library re-emits 'connect' on every
             // (re)connect; on the first connect this is a no-op because subscribers is still empty.
+            this.client.on("close", () => {
+                this.emit({ type: "close", filters: this.subscribers.size });
+            });
             this.client.on("connect", (connack: mqtt.IConnackPacket) => {
-                if (connack && (connack as { sessionPresent?: boolean }).sessionPresent) {
+                const sessionPresent = !!(connack as { sessionPresent?: boolean })?.sessionPresent;
+                const filters = Array.from(this.subscribers.keys());
+                this.emit({ type: "connect", sessionPresent, filters: filters.length });
+                if (sessionPresent) {
                     return;
                 }
-                const filters = Array.from(this.subscribers.keys());
                 if (filters.length === 0) return;
-                this.client!.subscribeAsync(filters).catch((err: Error) => {
-                    warn(`Failed to re-subscribe ${filters.length} filters after reconnect: ${err.message}`);
-                });
+                const startedAt = Date.now();
+                this.client!.subscribeAsync(filters)
+                    .then(() => {
+                        this.emit({
+                            type: "resubscribe",
+                            filters: filters.length,
+                            durationMs: Date.now() - startedAt,
+                        });
+                    })
+                    .catch((err: Error) => {
+                        warn(`Failed to re-subscribe ${filters.length} filters after reconnect: ${err.message}`);
+                        this.emit({
+                            type: "resubscribe",
+                            filters: filters.length,
+                            durationMs: Date.now() - startedAt,
+                            error: err.message,
+                        });
+                    });
             });
         })();
         try {

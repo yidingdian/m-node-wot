@@ -19,6 +19,7 @@
 
 import { ProtocolClientFactory, ProtocolClient, createDebugLogger } from "@node-wot/core";
 import MqttClient from "./mqtt-client";
+import { MqttClientConfig } from "./mqtt";
 import * as url from "url";
 
 const debug = createDebugLogger("binding-mqtt", "mqtt-client-factory");
@@ -27,13 +28,15 @@ export default class MqttClientFactory implements ProtocolClientFactory {
     public readonly scheme: string = "mqtt";
     private readonly clientMap: Map<string, ProtocolClient> = new Map();
 
+    constructor(private readonly config: MqttClientConfig = {}) {}
+
     getClient(brokerUri?: string): ProtocolClient {
         const key = brokerUri ? this._normalizeUri(brokerUri) : "default";
         if (this.clientMap.has(key)) {
             debug(`Reusing existing MQTT client for broker '${key}'`);
             return this.clientMap.get(key)!;
         }
-        const client = new MqttClient();
+        const client = new MqttClient(this.config);
         this.clientMap.set(key, client);
         return client;
     }

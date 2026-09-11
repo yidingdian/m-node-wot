@@ -45,6 +45,23 @@ export class MqttForm extends Form {
     };
 }
 
+/**
+ * Connection-level event handed to the host via MqttClientConfig.onConnectionEvent.
+ * `broker` names the individual connection: broker URI plus shard suffix.
+ */
+export interface MqttConnectionEvent {
+    type: "connect" | "resubscribe" | "close" | "error";
+    broker: string;
+    /** connect: whether the broker kept our previous session (no resubscribe needed). */
+    sessionPresent?: boolean;
+    /** connect / resubscribe: how many topic filters this connection carries. */
+    filters?: number;
+    /** resubscribe: how long the batch SUBSCRIBE took. */
+    durationMs?: number;
+    /** resubscribe / error: failure message. */
+    error?: string;
+}
+
 export interface MqttClientConfig {
     // username & password are redundant here (also find them in MqttClientSecurityParameters)
     // because MqttClient.setSecurity() method can inject authentication credentials into this interface
@@ -66,6 +83,19 @@ export interface MqttClientConfig {
      * MQTT_CONN_SHARDS environment variable.
      */
     connectionShards?: number;
+    /**
+     * MQTT keepalive in seconds. The client gives up after three checks without
+     * a processed PINGRESP, and inbound traffic does not reset that counter, so
+     * keep this well above the worst event-loop stall or the client tears down a
+     * healthy connection. Defaults to the mqtt library's 60s.
+     */
+    keepalive?: number;
+    /**
+     * Optional sink for connection-level events. Subscriptions are restored here
+     * on reconnect, so without a hook that recovery is invisible to the host.
+     * Events are per connection, not per subscription, so this stays cheap.
+     */
+    onConnectionEvent?: (event: MqttConnectionEvent) => void;
     /**
      * QoS of the auto-ack published back on a received message's responseTopic.
      * Default 0. Raise it only if the broker is measurably dropping acks: QoS 1

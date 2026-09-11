@@ -127,6 +127,7 @@ export default class MqttClient implements ProtocolClient {
                 info(`[mqtt-shard] enabled: shards=${this.shards}, routing by hash(SN)`);
             }
             pool = new MQTTMessagePool();
+            pool.label = key;
             this.pools.set(key, pool);
             await pool.connect(brokerUri, this.config);
             if (this.shards > 1) {
